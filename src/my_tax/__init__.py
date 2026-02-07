@@ -1,23 +1,37 @@
 """My Tax — HTTP client for lknpd.nalog.ru API."""
 
-from my_tax.clients import AsyncMyTaxClient, SyncMyTaxClient
-from my_tax.exceptions import (
+from .clients import (
+    AsyncMyTaxClient, 
+    SyncMyTaxClient
+)
+
+from .domain.exceptions import (
     AccessTokenNotFoundError,
     AuthorizationError,
-    MyTaxError,
+    BaseDomainException,
     SmsChallengeError,
 )
-from my_tax.types import AuthData, Credentials, DeviceInfo, Token, User
+
+from .domain.entites import (
+    AuthData, 
+    Credentials, 
+    DeviceInfo, 
+    Token, 
+    User
+)
 
 __all__ = [
+    # Clients
     "AsyncMyTaxClient",
     "SyncMyTaxClient",
+    # Entities
     "AuthData",
     "Credentials",
     "DeviceInfo",
     "Token",
     "User",
-    "MyTaxError",
+    # Exceptions
+    "BaseDomainException",
     "AuthorizationError",
     "AccessTokenNotFoundError",
     "SmsChallengeError",

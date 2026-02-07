@@ -25,13 +25,13 @@ from .constants import (
     TOKEN_EXPIRE_BUFFER_MS,
 )
 
-from .exceptions import (
+from .domain.exceptions import (
     AccessTokenNotFoundError,
     AuthorizationError,
     SmsChallengeError,
 )
 
-from .types import (
+from .domain.entites import (
     AuthData, 
     Credentials, 
     DeviceInfo, 
@@ -131,14 +131,17 @@ def _handle_auth_errors(func: Any) -> Any:
             return await func(self, *args, **kwargs)
         except HTTPStatusError as ex:
             msg = _extract_auth_error_message(ex.response)
-            raise AuthorizationError(f"Ошибка авторизации: {msg}") from None
+            raise AuthorizationError(
+                f"Ошибка авторизации: {msg}",
+                response=ex.response,
+            ) from None
         except JSONDecodeError:
             raise AuthorizationError(
-                "Некорректный JSON в ответе авторизации"
+                "Некорректный JSON в ответе авторизации",
             ) from None
         except (KeyError, UnboundLocalError, TypeError):
             raise AuthorizationError(
-                "Неожиданная структура ответа авторизации"
+                "Неожиданная структура ответа авторизации",
             ) from None
 
     @wraps(func)
@@ -147,14 +150,17 @@ def _handle_auth_errors(func: Any) -> Any:
             return func(self, *args, **kwargs)
         except HTTPStatusError as ex:
             msg = _extract_auth_error_message(ex.response)
-            raise AuthorizationError(f"Ошибка авторизации: {msg}") from None
+            raise AuthorizationError(
+                f"Ошибка авторизации: {msg}",
+                response=ex.response,
+            ) from None
         except JSONDecodeError:
             raise AuthorizationError(
-                "Некорректный JSON в ответе авторизации"
+                "Некорректный JSON в ответе авторизации",
             ) from None
         except (KeyError, UnboundLocalError, TypeError):
             raise AuthorizationError(
-                "Неожиданная структура ответа авторизации"
+                "Неожиданная структура ответа авторизации",
             ) from None
 
     if asyncio.iscoroutinefunction(func):

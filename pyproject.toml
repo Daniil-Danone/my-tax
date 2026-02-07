@@ -11,6 +11,8 @@ license = { file = "LICENSE" }
 requires-python = ">=3.14"
 dependencies = [
     "httpx>=0.28.1",
+    "pydantic>=2.0.0",
+    "pytz>=2025.1",
 ]
 
 [project.optional-dependencies]

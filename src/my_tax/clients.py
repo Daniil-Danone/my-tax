@@ -3,11 +3,16 @@
 
 Поддерживают авторизацию по ИНН/паролю и по телефону (SMS).
 Опционально — сохранение состояния авторизации в Redis.
+Обработка 401 (refresh токена и один retry) — на уровне клиента в методе request().
 """
 
+import asyncio
 import json
+import threading
 from datetime import datetime
 from typing import Any, Optional, Protocol, Union
+
+import httpx
 
 from ._http import (
     AsyncTransport,
@@ -22,11 +27,11 @@ from ._http import (
 
 from .api.user import UserAsyncApi, UserSyncApi
 
-from .types import (
+from .domain.entites import (
     AuthData,
     Credentials,
     Token,
-    User,
+    User
 )
 
 
@@ -172,8 +177,8 @@ class SyncMyTaxClient:
         self._redis = redis
         self._redis_key = redis_key
         self._redis_ttl = redis_ttl_seconds
-        
-        self._user_api = UserSyncApi(self._transport, self.get_auth_headers)
+        self._refresh_lock = threading.Lock()
+        self._user_api = UserSyncApi(self)
 
     @property
     def transport(self) -> SyncTransport:
@@ -220,26 +225,57 @@ class SyncMyTaxClient:
         payload = _serialize_session(auth)
         self._redis.set(self._redis_key, payload, ex=self._redis_ttl)
 
-    def get_auth_headers(self) -> dict[str, str]:
+    def get_auth_headers(self, force_refresh: bool = False) -> dict[str, str]:
         """
         Заголовки с Bearer-токеном для запросов к API.
 
-        Сначала проверяется Redis (если передан): при валидной сессии в кэше
-        заголовки берутся из неё. Иначе выполняется авторизация (пароль или
-        телефон), результат при наличии redis сохраняется в кэш.
+        Сначала проверяется Redis (если передан и не force_refresh): при валидной
+        сессии в кэше заголовки берутся из неё. Иначе выполняется авторизация
+        (пароль или телефон), при force_refresh — принудительное обновление токена.
+        Результат при наличии redis сохраняется в кэш.
         """
-        cached = self._load_session_from_redis()
-        if cached is not None and is_token_fresh(cached.token.access_expire_in):
-            return build_bearer_headers(cached.token.access_token)
+        if not force_refresh:
+            cached = self._load_session_from_redis()
+            if cached is not None and is_token_fresh(cached.token.access_expire_in):
+                return build_bearer_headers(cached.token.access_token)
 
         auth = self._get_active_auth()
+        if force_refresh and auth.is_authenticated:
+            auth.refresh_token()
         headers = auth.get_auth_headers()
-        
+
         session = auth.session
         if session is not None:
             self._save_session_to_redis(session)
-        
+
         return headers
+
+    def request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """
+        Запрос к API с подстановкой авторизации и обработкой 401.
+
+        При 401 — один retry: обновление токена (под lock) и повтор запроса.
+        Вызов raise_for_status() не выполняется — это делает вызывающий код.
+        """
+        headers = self.get_auth_headers(force_refresh=False)
+        response = self._transport.raw_client.request(
+            method=method, 
+            url=path, 
+            headers=headers,
+            **kwargs
+        )
+        
+        if response.status_code == 401:
+            with self._refresh_lock:
+                new_headers = self.get_auth_headers(force_refresh=True)
+                response = self._transport.raw_client.request(
+                    method=method, 
+                    url=path, 
+                    headers=new_headers, 
+                    **kwargs
+                )
+
+        return response
 
     def get_user(self) -> User:
         """Получение профиля текущего пользователя (GET /user)."""
@@ -303,8 +339,8 @@ class AsyncMyTaxClient:
         self._redis = redis
         self._redis_key = redis_key
         self._redis_ttl = redis_ttl_seconds
-        
-        self._user_api = UserAsyncApi(self._transport, self.get_auth_headers)
+        self._refresh_lock = asyncio.Lock()
+        self._user_api = UserAsyncApi(self)
 
     @property
     def transport(self) -> AsyncTransport:
@@ -351,26 +387,59 @@ class AsyncMyTaxClient:
         payload = _serialize_session(auth)
         await self._redis.set(self._redis_key, payload, ex=self._redis_ttl)
 
-    async def get_auth_headers(self) -> dict[str, str]:
+    async def get_auth_headers(self, force_refresh: bool = False) -> dict[str, str]:
         """
         Заголовки с Bearer-токеном для запросов к API.
 
-        Сначала проверяется Redis (если передан): при валидной сессии в кэше
-        заголовки берутся из неё. Иначе выполняется авторизация (пароль или
-        телефон), результат при наличии redis сохраняется в кэш.
+        Сначала проверяется Redis (если передан и не force_refresh): при валидной
+        сессии в кэше заголовки берутся из неё. Иначе выполняется авторизация
+        (пароль или телефон), при force_refresh — принудительное обновление токена.
+        Результат при наличии redis сохраняется в кэш.
         """
-        cached = await self._load_session_from_redis()
-        if cached is not None and is_token_fresh(cached.token.access_expire_in):
-            return build_bearer_headers(cached.token.access_token)
+        if not force_refresh:
+            cached = await self._load_session_from_redis()
+            if cached is not None and is_token_fresh(cached.token.access_expire_in):
+                return build_bearer_headers(cached.token.access_token)
 
         auth = self._get_active_auth()
+        if force_refresh and auth.is_authenticated:
+            await auth.refresh_token()
         headers = await auth.get_auth_headers()
-        
+
         session = auth.session
         if session is not None:
             await self._save_session_to_redis(session)
-        
+
         return headers
+
+    async def request(
+        self, method: str, path: str, **kwargs: Any
+    ) -> httpx.Response:
+        """
+        Запрос к API с подстановкой авторизации и обработкой 401.
+
+        При 401 — один retry: обновление токена (под lock) и повтор запроса.
+        Вызов raise_for_status() не выполняется — это делает вызывающий код.
+        """
+        headers = await self.get_auth_headers(force_refresh=False)
+        response = await self._transport.raw_client.request(
+            method=method, 
+            url=path, 
+            headers=headers,
+            **kwargs
+        )
+
+        if response.status_code == 401:
+            async with self._refresh_lock:
+                new_headers = await self.get_auth_headers(force_refresh=True)
+                response = await self._transport.raw_client.request(
+                    method=method, 
+                    url=path, 
+                    headers=new_headers, 
+                    **kwargs
+                )
+
+        return response
 
     async def get_user(self) -> User:
         """Получение профиля текущего пользователя (GET /user)."""

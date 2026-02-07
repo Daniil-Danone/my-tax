@@ -1,41 +1,43 @@
 """
 Базовые классы для ручек API.
 
-Дают общий контракт: транспорт + получение заголовков авторизации
-и метод _request_get для GET-запросов с разбором JSON.
+Ручки принимают клиент и вызывают client.request(method, path) — вся логика
+авторизации и 401 (refresh + retry) сосредоточена в клиенте.
 """
 
 from abc import ABC
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Dict, Protocol
 
-from .._http import AsyncTransport, SyncTransport
+import httpx
+
+
+class SyncRequestClient(Protocol):
+    """Протокол синхронного клиента с методом request (авторизация и 401 внутри)."""
+
+    def request(self, method: str, path: str, **kwargs: Any) -> httpx.Response: ...
+
+
+class AsyncRequestClient(Protocol):
+    """Протокол асинхронного клиента с методом request (авторизация и 401 внутри)."""
+
+    async def request(
+        self, method: str, path: str, **kwargs: Any
+    ) -> httpx.Response: ...
 
 
 class BaseSyncApi(ABC):
     """
     Базовый класс для синхронных ручек API.
 
-    Принимает транспорт и callable для получения заголовков авторизации.
-    Наследники вызывают _request_get(path) для GET и получают уже разобранный JSON.
+    Принимает клиент; запросы идут через client.request(), 401 обрабатывается в клиенте.
     """
 
-    def __init__(
-        self,
-        transport: SyncTransport,
-        get_headers: Callable[[], Dict[str, str]],
-    ) -> None:
-        self._transport = transport
-        self._get_headers = get_headers
+    def __init__(self, client: SyncRequestClient) -> None:
+        self._client = client
 
     def _request_get(self, path: str) -> Dict[str, Any]:
-        """
-        Выполнение GET-запроса по path с подстановкой авторизации.
-
-        Возвращает ответ как словарь (response.json()).
-        Поднимает httpx.HTTPStatusError при ошибке статуса.
-        """
-        headers = self._get_headers()
-        response = self._transport.raw_client.get(path, headers=headers)
+        """GET по path через клиент (с авторизацией и 401 retry)."""
+        response = self._client.request("GET", path)
         response.raise_for_status()
         return response.json()
 
@@ -44,29 +46,14 @@ class BaseAsyncApi(ABC):
     """
     Базовый класс для асинхронных ручек API.
 
-    Принимает транспорт и async callable для получения заголовков авторизации.
-    Наследники вызывают await _request_get(path) для GET и получают разобранный JSON.
+    Принимает клиент; запросы идут через await client.request(), 401 обрабатывается в клиенте.
     """
 
-    def __init__(
-        self,
-        transport: AsyncTransport,
-        get_headers: Callable[[], Awaitable[Dict[str, str]]],
-    ) -> None:
-        """
-        get_headers — корутина или async-функция без аргументов, возвращающая dict заголовков.
-        """
-        self._transport = transport
-        self._get_headers = get_headers
+    def __init__(self, client: AsyncRequestClient) -> None:
+        self._client = client
 
     async def _request_get(self, path: str) -> Dict[str, Any]:
-        """
-        Выполнение GET-запроса по path с подстановкой авторизации.
-
-        Возвращает ответ как словарь (response.json()).
-        Поднимает httpx.HTTPStatusError при ошибке статуса.
-        """
-        headers = await self._get_headers()
-        response = await self._transport.raw_client.get(path, headers=headers)
+        """GET по path через клиент (с авторизацией и 401 retry)."""
+        response = await self._client.request("GET", path)
         response.raise_for_status()
         return response.json()
