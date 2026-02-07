@@ -13,8 +13,13 @@
 
 ## Зависимости
 
-- **Обязательные:** [httpx](https://www.python-httpx.org/) ≥ 0.28.1 (HTTP-клиент с поддержкой sync/async).
-- **Опциональные:** [redis](https://redis-py.readthedocs.io/) ≥ 5.0.0 — только если нужно кэшировать состояние авторизации в Redis (устанавливаются через `pip install my-tax[redis]`).
+**Обязательные:** 
+- [httpx](https://www.python-httpx.org/) ≥ 0.28.1 (HTTP-клиент с поддержкой sync/async).
+- [pydantic](https://docs.pydantic.dev/) ≥ 2.0.0 (для валидации данных).
+- [pytz](https://pythonhosted.org/pytz/) ≥ 2025.1 (для работы с временными зонами).
+
+**Опциональные:** 
+- [redis](https://redis-py.readthedocs.io/) ≥ 5.0.0 — только если нужно кэшировать состояние авторизации в Redis (устанавливаются через `pip install my-tax[redis]`).
 
 Требуется **Python ≥ 3.14**.
 

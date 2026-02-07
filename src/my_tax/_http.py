@@ -6,7 +6,7 @@
 """
 
 import asyncio
-import random
+import secrets
 import string
 import time
 from abc import ABC, abstractmethod
@@ -45,10 +45,9 @@ from .domain.entites import (
 
 
 def create_device_id(length: int = 22) -> str:
-    """Генерация случайного идентификатора устройства для deviceInfo."""
-    return "".join(
-        random.choices(string.ascii_lowercase + string.digits, k=length)
-    )
+    """Генерация случайного идентификатора устройства для deviceInfo (secrets — криптостойкий RNG)."""
+    alphabet = string.ascii_lowercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 def create_device_info(device_id: Optional[str] = None) -> DeviceInfo:
