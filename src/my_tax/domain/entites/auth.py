@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Credentials(BaseModel):
@@ -20,10 +20,10 @@ class Token(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=False)
 
-    access_token: str
-    access_expire_in: datetime
-    refresh_token: str
-    refresh_expire_in: datetime
+    access_token: str = Field(alias="token")
+    access_expire_in: datetime = Field(alias="tokenExpireIn")
+    refresh_token: str = Field(alias="refreshToken")
+    refresh_expire_in: Optional[datetime] = Field(default=None, alias="refreshTokenExpiresIn")
 
 
 class AuthData(BaseModel):

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "my-tax"
-version = "0.1.2"
+version = "0.1.2.1"
 description = "HTTP client for lknpd.nalog.ru API (sync and async, password and phone SMS auth)"
 readme = "README.md"
 license = { file = "LICENSE" }

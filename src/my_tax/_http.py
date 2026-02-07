@@ -68,19 +68,6 @@ def build_body_with_device(device_info: DeviceInfo, **kwargs: Any) -> Dict[str, 
 # ---------------------------------------------------------------------------
 
 
-def parse_token_from_response(data: Dict[str, Any]) -> Token:
-    """Парсинг токена из JSON-ответа API авторизации."""
-    raw_access_expire = data.get("tokenExpireIn").replace("Z", "+00:00")
-    raw_refresh_expire = data.get("refreshTokenExpiresIn", "").replace("Z", "+00:00")
-
-    return Token(
-        access_token=data.get("token"),
-        access_expire_in=datetime.fromisoformat(raw_access_expire),
-        refresh_token=data.get("refreshToken", ""),
-        refresh_expire_in=datetime.fromisoformat(raw_refresh_expire),
-    )
-
-
 def is_token_fresh(expire_in: datetime) -> bool:
     """Проверка, что токен ещё действителен (с запасом по времени)."""
     now_ms = int(time.time() * 1000)
@@ -96,7 +83,7 @@ def build_bearer_headers(access_token: str) -> Dict[str, str]:
 def auth_details_from_response(data: Dict[str, Any]) -> AuthData:
     """Сборка AuthDetails из JSON-ответа с profile и токеном."""
     profile: Dict[str, Any] = data.get("profile", {})
-    token = parse_token_from_response(data)
+    token = Token.model_validate(data.get("token", {}))
     
     return AuthData(
         inn=profile.get("inn", ""),

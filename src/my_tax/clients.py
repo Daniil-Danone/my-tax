@@ -78,49 +78,16 @@ class AsyncAuthStorage(Protocol):
 # Сериализация состояния авторизации для Redis
 # ---------------------------------------------------------------------------
 
-
-def _auth_data_to_dict(auth: AuthData) -> dict[str, Any]:
-    """Сериализация AuthData в словарь для сохранения в Redis."""
-    return {
-        "inn": auth.inn,
-        "display_name": auth.display_name,
-        "token": {
-            "access_token": auth.token.access_token,
-            "access_expire_in": auth.token.access_expire_in.isoformat(),
-            "refresh_token": auth.token.refresh_token,
-            "refresh_expire_in": auth.token.refresh_expire_in.isoformat(),
-        },
-    }
-
-
-def _auth_data_from_dict(data: dict[str, Any]) -> AuthData:
-    """Восстановление AuthData из словаря (из Redis)."""
-    raw = data.get("token", {})
-    
-    token = Token(
-        access_token=raw.get("access_token", ""),
-        access_expire_in=datetime.fromisoformat(raw.get("access_expire_in", "").replace("Z", "+00:00")),
-        refresh_token=raw.get("refresh_token", ""),
-        refresh_expire_in=datetime.fromisoformat(raw.get("refresh_expire_in", "").replace("Z", "+00:00")),
-    )
-    
-    return AuthData(
-        inn=data.get("inn", ""),
-        token=token,
-        display_name=data.get("display_name")
-    )
-
-
 def _serialize_session(auth: AuthData) -> str:
     """Сериализация сессии в JSON-строку."""
-    return json.dumps(_auth_data_to_dict(auth), ensure_ascii=False)
+    return AuthData.model_dump_json(auth)
 
 
 def _deserialize_session(payload: Union[str, bytes]) -> Optional[AuthData]:
     """Десериализация сессии из JSON-строки. При ошибке — None."""
     try:
         raw = payload.decode() if isinstance(payload, bytes) else payload
-        return _auth_data_from_dict(json.loads(raw))
+        return AuthData.model_validate_json(raw)
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
 
