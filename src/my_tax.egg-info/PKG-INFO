@@ -1,0 +1,145 @@
+Metadata-Version: 2.4
+Name: my-tax
+Version: 0.1.0
+Summary: HTTP client for lknpd.nalog.ru API (sync and async, password and phone SMS auth)
+License: MIT License
+        
+        Copyright (c) 2026 Daniil-Danone
+        
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+        
+        The above copyright notice and this permission notice shall be included in all
+        copies or substantial portions of the Software.
+        
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+        
+Requires-Python: >=3.14
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: httpx>=0.28.1
+Provides-Extra: redis
+Requires-Dist: redis>=5.0.0; extra == "redis"
+Dynamic: license-file
+
+# my-tax
+
+НЕОФИЦИАЛЬНЫЙ HTTP-клиент для работы с API [Личного кабинета самозанятого (ЛК НПД)](https://lknpd.nalog.ru) Кабинет налогоплательщика НПД "Мой налог" России. Поддерживает синхронный и асинхронный режимы, авторизацию по логину/паролю (ИНН) и по номеру телефона с кодом из SMS, а также опциональное кэширование сессии в Redis.
+
+## Для чего этот пакет
+
+- **Обращение к API ЛК НПД** — получение профиля пользователя (GET /user) и возможность расширять список методов через отдельные «ручки» в папке `api/`.
+- **Два способа авторизации:**
+  - по **логину и паролю** (учётная запись по ИНН);
+  - по **телефону и коду из SMS** (старт челленджа → ввод кода → верификация).
+- **Синхронный и асинхронный клиенты** — `SyncMyTaxClient` и `AsyncMyTaxClient` с единым стилем использования.
+- **Опциональное хранение сессии в Redis** — не передавать логин/пароль при каждом запросе и переиспользовать токен между запусками (при передаче `redis` и `redis_key`).
+
+## Зависимости
+
+- **Обязательные:** [httpx](https://www.python-httpx.org/) ≥ 0.28.1 (HTTP-клиент с поддержкой sync/async).
+- **Опциональные:** [redis](https://redis-py.readthedocs.io/) ≥ 5.0.0 — только если нужно кэшировать состояние авторизации в Redis (устанавливаются через `pip install my-tax[redis]`).
+
+Требуется **Python ≥ 3.14**.
+
+## Установка
+
+```bash
+pip install my-tax
+# или с Redis:
+pip install my-tax[redis]
+```
+
+## Примеры использования
+
+### Синхронный клиент, авторизация по логину и паролю
+
+```python
+from my_tax import SyncMyTaxClient, Credentials, User
+
+client = SyncMyTaxClient(
+    credentials=Credentials(username="ваш_логин", password="ваш_пароль"),
+)
+user: User = client.get_user()
+print(user.display_name, user.inn)
+client.close()
+```
+
+### Асинхронный клиент, авторизация по телефону (SMS)
+
+```python
+import asyncio
+from my_tax import AsyncMyTaxClient, User
+
+async def main():
+    client = AsyncMyTaxClient()
+    await client.auth_by_phone.start_challenge("79991234567")
+    code = input("Введите код подвтерждения: ")
+    await client.auth_by_phone.verify_and_login("79991234567", code)
+    user: User = await client.get_user()
+    print(user.display_name)
+    await client.aclose()
+
+asyncio.run(main())
+```
+
+### Кэширование сессии в Redis
+
+```python
+import redis
+from my_tax import SyncMyTaxClient, Credentials
+
+r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+client = SyncMyTaxClient(
+    credentials=Credentials(username="...", password="..."),
+    redis=r,
+    redis_key="my_tax:session:user_1",
+    redis_ttl_seconds=3600,
+)
+# первый вызов — авторизация по паролю, сессия сохраняется в Redis
+headers = client.get_auth_headers()
+# последующие вызовы могут брать токен из Redis, пока он действителен
+client.close()
+```
+
+### Ручки API и метод через свойство `user`
+
+```python
+from my_tax import SyncMyTaxClient, Credentials
+
+client = SyncMyTaxClient(credentials=Credentials(username="...", password="..."))
+# через клиента
+user = client.get_user()
+# или через ручку пользователя
+user = client.user.get_user()
+client.close()
+```
+
+## Структура проекта
+
+- **`my_tax/clients.py`** — синхронный и асинхронный клиенты (`SyncMyTaxClient`, `AsyncMyTaxClient`).
+- **`my_tax/_http.py`** — транспорт (sync/async), стратегии авторизации (пароль, SMS).
+- **`my_tax/api/`** — ручки API:
+  - **`base.py`** — базовые классы `BaseSyncApi`, `BaseAsyncApi` для добавления новых эндпоинтов.
+  - **`user.py`** — ручки пользователя (GET /user).
+- **`my_tax/types.py`** — типы данных (`Credentials`, `User`, `AuthData`, `Token` и др.).
+- **`my_tax/constants.py`** — константы (URL API, заголовки и т.п.).
+
+## Лицензия и авторство
+
+Проект распространяется под лицензией **MIT**.
+
+- **Автор:** [Daniil-Danone](https://github.com/Daniil-Danone) 
+- **Copyright:** © 2026 Daniil-Danone  
+
+Текст лицензии см. в файле [LICENSE](LICENSE).

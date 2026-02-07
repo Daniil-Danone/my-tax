@@ -1,0 +1,17 @@
+LICENSE
+README.md
+pyproject.toml
+src/my_tax/__init__.py
+src/my_tax/_http.py
+src/my_tax/clients.py
+src/my_tax/constants.py
+src/my_tax/exceptions.py
+src/my_tax/types.py
+src/my_tax.egg-info/PKG-INFO
+src/my_tax.egg-info/SOURCES.txt
+src/my_tax.egg-info/dependency_links.txt
+src/my_tax.egg-info/requires.txt
+src/my_tax.egg-info/top_level.txt
+src/my_tax/api/__init__.py
+src/my_tax/api/base.py
+src/my_tax/api/user.py
