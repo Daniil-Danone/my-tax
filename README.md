@@ -1,25 +1,28 @@
 # my-tax
 
-НЕОФИЦИАЛЬНЫЙ HTTP-клиент для работы с API [Личного кабинета самозанятого (ЛК НПД)](https://lknpd.nalog.ru) Кабинет налогоплательщика НПД "Мой налог" России. Поддерживает синхронный и асинхронный режимы, авторизацию по логину/паролю (ИНН) и по номеру телефона с кодом из SMS, а также опциональное кэширование сессии в Redis.
+НЕОФИЦИАЛЬНЫЙ HTTP-клиент для работы с API [Личного кабинета самозанятого (ЛК НПД)](https://lknpd.nalog.ru) «Мой налог» (ФНС России). Поддерживает синхронный и асинхронный режимы, авторизацию по логину/паролю (ИНН) и по номеру телефона с кодом из SMS, опциональное кэширование сессии в Redis и автоматический retry при 401 с обновлением токена.
 
 ## Для чего этот пакет
 
-- **Обращение к API ЛК НПД** — получение профиля пользователя (GET /user) и возможность расширять список методов через отдельные «ручки» в папке `api/`.
+- **Обращение к API ЛК НПД** — получение профиля пользователя (GET /user) и расширяемый набор ручек в `api/`.
 - **Два способа авторизации:**
   - по **логину и паролю** (учётная запись по ИНН);
   - по **телефону и коду из SMS** (старт челленджа → ввод кода → верификация).
-- **Синхронный и асинхронный клиенты** — `SyncMyTaxClient` и `AsyncMyTaxClient` с единым стилем использования.
-- **Опциональное хранение сессии в Redis** — не передавать логин/пароль при каждом запросе и переиспользовать токен между запусками (при передаче `redis` и `redis_key`).
+- **Синхронный и асинхронный клиенты** — `SyncMyTaxClient` и `AsyncMyTaxClient` с единым стилем.
+- **Обработка 401 на уровне клиента** — один общий метод `request()`: при 401 обновление токена (под lock) и один повтор запроса; в ручках API не нужно прописывать retry.
+- **Опциональное хранение сессии в Redis** — переиспользование токена между запусками при передаче `redis` и `redis_key`.
 
 ## Зависимости
 
-**Обязательные:** 
-- [httpx](https://www.python-httpx.org/) ≥ 0.28.1 (HTTP-клиент с поддержкой sync/async).
-- [pydantic](https://docs.pydantic.dev/) ≥ 2.0.0 (для валидации данных).
-- [pytz](https://pythonhosted.org/pytz/) ≥ 2025.1 (для работы с временными зонами).
+**Обязательные:**
 
-**Опциональные:** 
-- [redis](https://redis-py.readthedocs.io/) ≥ 5.0.0 — только если нужно кэшировать состояние авторизации в Redis (устанавливаются через `pip install my-tax[redis]`).
+- [httpx](https://www.python-httpx.org/) ≥ 0.28.1 — HTTP-клиент (sync/async).
+- [pydantic](https://docs.pydantic.dev/) ≥ 2.0.0 — валидация и схемы данных.
+- [pytz](https://pythonhosted.org/pytz/) ≥ 2025.1 — временные зоны (логгер).
+
+**Опциональные:**
+
+- [redis](https://redis-py.readthedocs.io/) ≥ 5.0.0 — кэш сессии: `pip install my-tax[redis]`.
 
 Требуется **Python ≥ 3.14**.
 
@@ -29,6 +32,13 @@
 pip install my-tax
 # или с Redis:
 pip install my-tax[redis]
+```
+
+Из репозитория (режим разработки):
+
+```bash
+pip install -e .
+pip install -e ".[redis]"
 ```
 
 ## Примеры использования
@@ -55,7 +65,7 @@ from my_tax import AsyncMyTaxClient, User
 async def main():
     client = AsyncMyTaxClient()
     await client.auth_by_phone.start_challenge("79991234567")
-    code = input("Введите код подвтерждения: ")
+    code = input("Введите код подтверждения: ")
     await client.auth_by_phone.verify_and_login("79991234567", code)
     user: User = await client.get_user()
     print(user.display_name)
@@ -77,13 +87,13 @@ client = SyncMyTaxClient(
     redis_key="my_tax:session:user_1",
     redis_ttl_seconds=3600,
 )
-# первый вызов — авторизация по паролю, сессия сохраняется в Redis
+# первый вызов — авторизация, сессия сохраняется в Redis
 headers = client.get_auth_headers()
-# последующие вызовы могут брать токен из Redis, пока он действителен
+# последующие вызовы берут токен из Redis, пока он действителен
 client.close()
 ```
 
-### Ручки API и метод через свойство `user`
+### Ручки API и свойство `user`
 
 ```python
 from my_tax import SyncMyTaxClient, Credentials
@@ -96,21 +106,41 @@ user = client.user.get_user()
 client.close()
 ```
 
+### Низкоуровневый запрос с авторизацией и 401-retry
+
+```python
+from my_tax import SyncMyTaxClient, Credentials
+
+client = SyncMyTaxClient(credentials=Credentials(username="...", password="..."))
+# request() сам подставляет заголовки и при 401 обновляет токен и повторяет запрос
+response = client.request("GET", "/user")
+response.raise_for_status()
+data = response.json()
+client.close()
+```
+
 ## Структура проекта
 
-- **`my_tax/clients.py`** — синхронный и асинхронный клиенты (`SyncMyTaxClient`, `AsyncMyTaxClient`).
-- **`my_tax/_http.py`** — транспорт (sync/async), стратегии авторизации (пароль, SMS).
-- **`my_tax/api/`** — ручки API:
-  - **`base.py`** — базовые классы `BaseSyncApi`, `BaseAsyncApi` для добавления новых эндпоинтов.
-  - **`user.py`** — ручки пользователя (GET /user).
-- **`my_tax/types.py`** — типы данных (`Credentials`, `User`, `AuthData`, `Token` и др.).
-- **`my_tax/constants.py`** — константы (URL API, заголовки и т.п.).
+```
+src/my_tax/
+├── __init__.py          # экспорт клиентов, сущностей, исключений
+├── clients.py           # SyncMyTaxClient, AsyncMyTaxClient (request(), get_auth_headers, 401-retry)
+├── _http.py             # транспорт (sync/async), стратегии авторизации (пароль, SMS)
+├── constants.py         # URL API, заголовки
+├── logger.py            # настройка логгера (TZFormatter, setup_logger)
+├── api/
+│   ├── base.py          # BaseSyncApi, BaseAsyncApi (ручки вызывают client.request())
+│   └── user.py          # UserSyncApi, UserAsyncApi (GET /user)
+└── domain/
+    ├── exceptions.py    # BaseDomainException, AuthorizationError, AccessTokenNotFoundError, SmsChallengeError
+    └── entites/         # AuthData, Credentials, Token, DeviceInfo, User (Pydantic/сущности)
+```
 
 ## Лицензия и авторство
 
 Проект распространяется под лицензией **MIT**.
 
-- **Автор:** [Daniil-Danone](https://github.com/Daniil-Danone) 
-- **Copyright:** © 2026 Daniil-Danone  
+- **Автор:** [Daniil-Danone](https://github.com/Daniil-Danone)
+- **Copyright:** © 2026 Daniil-Danone
 
 Текст лицензии см. в файле [LICENSE](LICENSE).
