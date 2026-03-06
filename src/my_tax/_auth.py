@@ -134,6 +134,22 @@ class PasswordAuth(AuthStrategy):
     def session(self) -> Optional[AuthData]:
         return self._session
 
+    def restore_session(
+        self, session: AuthData, device_id: Optional[str] = None
+    ) -> None:
+        """
+        Восстановить сессию из кэша (например из Redis).
+        device_id обязателен для refresh — API привязывает refresh-токен к устройству.
+        """
+        self._session = session
+        if device_id is not None:
+            self._device = create_device_info(device_id=device_id)
+
+    @property
+    def device_id(self) -> str:
+        """Идентификатор устройства для запросов к API (привязка refresh-токена)."""
+        return self._device.source_device_id
+
     @property
     def is_authenticated(self) -> bool:
         return self._session is not None
@@ -283,6 +299,22 @@ class PhoneSmsAuth(AuthStrategy):
     @property
     def session(self) -> Optional[AuthData]:
         return self._session
+
+    def restore_session(
+        self, session: AuthData, device_id: Optional[str] = None
+    ) -> None:
+        """
+        Восстановить сессию из кэша (например из Redis).
+        device_id обязателен для refresh — API привязывает refresh-токен к устройству.
+        """
+        self._session = session
+        if device_id is not None:
+            self._device = create_device_info(device_id=device_id)
+
+    @property
+    def device_id(self) -> str:
+        """Идентификатор устройства для запросов к API (привязка refresh-токена)."""
+        return self._device.source_device_id
 
     @property
     def is_authenticated(self) -> bool:

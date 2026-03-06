@@ -30,7 +30,7 @@ async def main():
         )
 
         print(f"Чек аннулирован: {canceled.uuid}")
-        print(f"Причина: {canceled.cancelation_info.comment}")
+        print(f"Причина: {canceled.cancellation_info.comment}")
 
 
 if __name__ == "__main__":

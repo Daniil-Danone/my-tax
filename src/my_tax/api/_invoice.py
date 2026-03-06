@@ -2,7 +2,7 @@
 API для счетов (Invoice).
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Union, overload
 
 from ._base import BaseApi
@@ -19,7 +19,6 @@ from ..types.invoice import (
     SearchInvoicesSortItem,
 )
 
-from ..enums.general import ClientType
 from ..enums.invoice import InvoiceStatusFilter
 
 from ..constants import (
@@ -105,7 +104,7 @@ class InvoiceApi(BaseApi):
 
         data = await self._request_post(
             path=INVOICE_LIST_PATH,
-            json_data=request.model_dump(by_alias=True),
+            json_data=request.model_dump(mode="json", by_alias=True),
         )
 
         return ListInvoices.model_validate(data)
@@ -121,7 +120,7 @@ class InvoiceApi(BaseApi):
         """
         data = await self._request_post(
             path=INVOICE_LIST_PATH,
-            json_data=request.model_dump(by_alias=True),
+            json_data=request.model_dump(mode="json", by_alias=True),
         )
 
         return ListInvoices.model_validate(data)
@@ -129,43 +128,49 @@ class InvoiceApi(BaseApi):
     @overload
     async def create(
         self,
+        *,
         service: CreateInvoiceItem,
         client: CreateInvoiceClient,
-        payment_method: PaymentMethod
+        payment_method: PaymentMethod,
     ) -> Invoice: ...
 
     @overload
     async def create(
         self,
+        *,
         services: List[CreateInvoiceItem],
         client: CreateInvoiceClient,
-        payment_method: PaymentMethod
+        payment_method: PaymentMethod,
     ) -> Invoice: ...
 
     async def create(
         self,
-        service_or_services: Union[CreateInvoiceItem, List[CreateInvoiceItem]],
         *,
+        service: Optional[CreateInvoiceItem] = None,
+        services: Optional[List[CreateInvoiceItem]] = None,
         client: CreateInvoiceClient,
-        payment_method: PaymentMethod
+        payment_method: PaymentMethod,
     ) -> Invoice:
         """
         Создать счёт.
 
         Args:
-            service_or_services: Услуга или список услуг.
+            service: Одна услуга (передать service или services).
+            services: Список услуг (передать service или services).
             client: CreateInvoiceClient (тип клиента, имя, телефон, email, ИНН).
             payment_method: PaymentMethod (способ оплаты).
 
         Returns:
             Invoice: Созданный счёт.
         """
-
-        services = (
-            [service_or_services]
-            if isinstance(service_or_services, CreateInvoiceItem)
-            else service_or_services
-        )
+        if service is not None:
+            services_list = [service]
+        elif services is not None:
+            services_list = services
+        else:
+            raise TypeError(
+                "create() missing required argument: pass 'service' or 'services'"
+            )
 
         request = CreateInvoice(
             payment_type=payment_method.type,
@@ -178,7 +183,7 @@ class InvoiceApi(BaseApi):
             client_phone=client.phone,
             client_email=client.email,
             client_inn=client.inn,
-            services=services,
+            services=services_list,
             client_type=client.type,
         )
 
@@ -188,45 +193,80 @@ class InvoiceApi(BaseApi):
         """
         Создать счёт по полной модели запроса.
 
-        Args:
-            request: CreateInvoice (сервисы, клиент, реквизиты).
-
-        Returns:
-            Созданный счёт (Invoice).
+        После POST запрашивается список счетов и возвращается полный объект
+        созданного счёта (ответ создания может быть неполным).
         """
-
         data = await self._request_post(
             path=INVOICE_PATH,
-            json_data=request.model_dump(by_alias=True)
+            json_data=request.model_dump(mode="json", by_alias=True),
         )
+        
+        raw_id = data.get("invoiceId")
+        invoice_id = int(raw_id) if raw_id is not None else None
+        uuid_str = data.get("uuid")
+        
+        if invoice_id is None and not uuid_str:
+            raise ValueError(
+                "Ответ создания счёта не содержит invoiceId или uuid"
+            )
 
-        return Invoice.model_validate(data)
+        now = datetime.now(tz=timezone.utc)
+        list_res = await self.get_list(
+            from_date=now - timedelta(minutes=5),
+            to_date=now + timedelta(minutes=1),
+            status=InvoiceStatusFilter.CREATED,
+            limit=50,
+        )
+        for inv in list_res.items:
+            if invoice_id is not None and inv.invoice_id == invoice_id:
+                return inv
+            if uuid_str and inv.uuid == uuid_str:
+                return inv
+
+        raise ValueError(
+            f"Счёт (invoiceId={invoice_id!r}, uuid={uuid_str!r}) не найден "
+            "в списке после создания"
+        )
 
     async def cancel(self, invoice_id: Union[str, int]) -> Invoice:
         """
         Отменить счёт по id.
 
+        После POST запрашивается список счетов и возвращается полный объект.
+
         Args:
             invoice_id: ID счёта (str или int).
 
         Returns:
-            Обновлённый счёт (статус CANCELLED).
+            Invoice: Обновлённый счёт (статус CANCELLED).
         """
-
-        invoice_id = str(invoice_id).strip()
-        if not invoice_id:
+        invoice_id_str = str(invoice_id).strip()
+        if not invoice_id_str:
             raise ValueError("ID счёта (invoice_id) не может быть пустым")
 
-        if not invoice_id.isdigit():
+        if not invoice_id_str.isdigit():
             raise ValueError("ID счёта (invoice_id) должен быть числом")
 
-        data = await self._request_post(
-            path=INVOICE_CANCEL_PATH.format(
-                invoice_id=invoice_id
-            )
+        invoice_id_int = int(invoice_id_str)
+
+        await self._request_post(
+            path=INVOICE_CANCEL_PATH.format(invoice_id=invoice_id_str),
         )
 
-        return Invoice.model_validate(data)
+        now = datetime.now(tz=timezone.utc)
+        list_res = await self.get_list(
+            from_date=now - timedelta(days=30),
+            to_date=now + timedelta(minutes=1),
+            status=InvoiceStatusFilter.CANCELLED,
+            limit=50,
+        )
+        for inv in list_res.items:
+            if inv.invoice_id == invoice_id_int:
+                return inv
+
+        raise ValueError(
+            f"Счёт с id {invoice_id_str!r} не найден в списке после отмены"
+        )
 
     async def print_invoice(self, invoice_uuid: str) -> bytes:
         """

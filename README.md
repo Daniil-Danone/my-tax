@@ -265,7 +265,7 @@ print(f"Дата регистрации: {user.registration_date}")
 
 ## 🔄 Кэширование сессии в Redis
 
-При передаче `redis` и `redis_key` токен сохраняется в Redis и при следующем запросе подставляется из кэша (без повторной авторизации).
+При передаче `redis` и `redis_prefix` сессия сохраняется по ключу `{redis_prefix}:session` и при следующем запросе подставляется из кэша (без повторной авторизации).
 
 ```python
 from redis.asyncio import Redis
@@ -276,7 +276,7 @@ redis = Redis(host="localhost", port=6379, db=0)
 async with MyTaxClient(
     credentials=Credentials(username="770000000000", password="..."),
     redis=redis,
-    redis_key="my_tax:session:770000000000",
+    redis_prefix="my_tax:770000000000",
     redis_ttl_seconds=3600,
 ) as client:
     user = await client.user.get_user()  # авторизация + сохранение в Redis

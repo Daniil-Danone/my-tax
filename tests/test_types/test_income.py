@@ -15,7 +15,7 @@ from my_tax.types.income import (
     SearchIncomes,
     CancelIncome,
     CanceledIncome,
-    CancelationInfo,
+    CancellationInfo,
 )
 from my_tax.enums.general import ClientType
 from my_tax.enums.income import CancelReason, IncomePaymentType
@@ -59,23 +59,23 @@ class TestCreateIncomeClientValidator:
 # ---------------------------------------------------------------------------
 
 class TestCreateIncomeItem:
-    def test_decimal_serializes_to_string(self):
-        item = CreateIncomeItem(name="Svc", amount=Decimal("100.50"), quantity=Decimal("2"))
+    def test_decimal_serializes_for_api(self):
+        item = CreateIncomeItem(name="Svc", amount=Decimal("100.50"), quantity=2)
         dumped = item.model_dump()
-        assert dumped["amount"] == "100.50"
-        assert dumped["quantity"] == "2"
+        assert dumped["amount"] == 100.5
+        assert dumped["quantity"] == 2
 
     def test_get_total(self):
-        item = CreateIncomeItem(name="Svc", amount=Decimal("100"), quantity=Decimal("3"))
+        item = CreateIncomeItem(name="Svc", amount=Decimal("100"), quantity=3)
         assert item.get_total() == Decimal("300")
 
     def test_rejects_zero_amount(self):
         with pytest.raises(ValidationError):
-            CreateIncomeItem(name="Svc", amount=Decimal("0"), quantity=Decimal("1"))
+            CreateIncomeItem(name="Svc", amount=Decimal("0"), quantity=1)
 
     def test_rejects_empty_name(self):
         with pytest.raises(ValidationError):
-            CreateIncomeItem(name="", amount=Decimal("100"), quantity=Decimal("1"))
+            CreateIncomeItem(name="", amount=Decimal("100"), quantity=1)
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +89,8 @@ class TestCreateIncome:
 
     def test_total_amount_multiple_services(self):
         items = [
-            CreateIncomeItem(name="A", amount=Decimal("100"), quantity=Decimal("2")),
-            CreateIncomeItem(name="B", amount=Decimal("300"), quantity=Decimal("1")),
+            CreateIncomeItem(name="A", amount=Decimal("100"), quantity=2),
+            CreateIncomeItem(name="B", amount=Decimal("300"), quantity=1),
         ]
         income = CreateIncome(services=items)
         assert income.total_amount == Decimal("500")
@@ -105,6 +105,26 @@ class TestCreateIncome:
         # Key: datetime is flat string, not nested
         assert isinstance(dumped["operationTime"], str)
         assert dumped["operationTime"].endswith("Z")
+
+    def test_nested_client_and_services_serialize_with_alias(self):
+        """Вложенные client и services при model_dump(by_alias=True) дают camelCase."""
+        client = CreateIncomeClient(
+            type=ClientType.FROM_INDIVIDUAL,
+            name="Client Name",
+            phone="+7999",
+            inn=None,
+        )
+        item = CreateIncomeItem(name="Svc", amount=Decimal("10"), quantity=1)
+        income = CreateIncome(services=[item], client=client)
+        dumped = income.model_dump(by_alias=True)
+        assert "client" in dumped
+        assert dumped["client"]["incomeType"] == "FROM_INDIVIDUAL"
+        assert dumped["client"]["displayName"] == "Client Name"
+        assert dumped["client"]["contactPhone"] == "+7999"
+        assert "services" in dumped
+        assert dumped["services"][0]["name"] == "Svc"
+        assert dumped["services"][0]["amount"] == 10.0
+        assert dumped["services"][0]["quantity"] == 1
 
     def test_default_operation_time_is_utc(self, sample_income_item):
         income = CreateIncome(services=[sample_income_item])
@@ -143,10 +163,10 @@ class TestIncomeDeserialization:
         assert income.operation_time.year == 2026
         assert income.operation_time.tzinfo is not None
 
-    def test_with_cancelation_info(self):
+    def test_with_cancellation_info(self):
         data = {
             **INCOME_API_JSON,
-            "cancelationInfo": {
+            "cancellationInfo": {
                 "operationTime": "2026-02-01T12:00:00Z",
                 "registerTime": "2026-02-01T12:00:01Z",
                 "taxPeriodId": 202602,
@@ -154,14 +174,35 @@ class TestIncomeDeserialization:
             },
         }
         income = Income.model_validate(data)
-        assert income.cancelation_info is not None
-        assert income.cancelation_info.comment == CancelReason.MISTAKE
+        assert income.cancellation_info is not None
+        assert income.cancellation_info.comment == CancelReason.MISTAKE
+
+    def test_nested_cancellation_info_serializes_with_alias(self):
+        """Вложенный cancellationInfo при model_dump(by_alias=True) даёт camelCase ключи."""
+        data = {
+            **INCOME_API_JSON,
+            "cancellationInfo": {
+                "operationTime": "2026-02-01T12:00:00Z",
+                "registerTime": "2026-02-01T12:00:01Z",
+                "taxPeriodId": 202602,
+                "comment": "Чек сформирован ошибочно",
+            },
+        }
+        income = Income.model_validate(data)
+        dumped = income.model_dump(by_alias=True)
+        assert "cancellationInfo" in dumped
+        nested = dumped["cancellationInfo"]
+        assert "operationTime" in nested
+        assert "registerTime" in nested
+        assert "taxPeriodId" in nested
+        assert "comment" in nested
+        assert nested["comment"] == "Чек сформирован ошибочно"
 
     def test_optional_fields_none(self):
         income = Income.model_validate(INCOME_API_JSON)
         assert income.client_inn is None
         assert income.partner_code is None
-        assert income.cancelation_info is None
+        assert income.cancellation_info is None
 
 
 # ---------------------------------------------------------------------------

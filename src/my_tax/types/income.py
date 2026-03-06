@@ -43,15 +43,16 @@ class CreateIncomeItem(BaseModel):
         description="Стоимость услуги"
     )
 
-    quantity: PositiveDecimal = Field(
+    quantity: int = Field(
         ...,
-        description="Количество услуги"
+        ge=1,
+        description="Количество услуги (API принимает только целое число)"
     )
 
-    @field_serializer("amount", "quantity")
-    def serialize_decimal(self, value: Decimal) -> str:
-        """Сериализация Decimal в строку"""
-        return str(value)
+    @field_serializer("amount")
+    def serialize_amount(self, value: Decimal) -> float:
+        """Стоимость в JSON как число (1.5, не строка)."""
+        return float(value)
 
     def get_total(self) -> Decimal:
         """Получение общей стоимости услуги"""
@@ -164,8 +165,10 @@ class CreateIncome(BaseModel):
 # ---------------------------------------------------------------------------
 # Чек
 # ---------------------------------------------------------------------------
-class CancelationInfo(BaseModel):
-    """Вложенный объект информации об отмене чека"""
+class CancellationInfo(BaseModel):
+    """Вложенный объект информации об отмене чека."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     operation_time: AtomDateTime = Field(
         ...,
@@ -328,10 +331,10 @@ class Income(BaseModel):
         alias="invoiceId"
     )
 
-    cancelation_info: Optional[CancelationInfo] = Field(
+    cancellation_info: Optional[CancellationInfo] = Field(
         default=None,
         description="Информация об отмене чека",
-        alias="cancelationInfo"
+        alias="cancellationInfo"
     )
 
     operation_time: AtomDateTime = Field(
@@ -521,10 +524,10 @@ class CanceledIncome(BaseModel):
         alias="sourceDeviceId"
     )
 
-    cancelation_info: Optional[CancelationInfo] = Field(
+    cancellation_info: Optional[CancellationInfo] = Field(
         default=None,
         description="Информация об отмене чека",
-        alias="cancelationInfo"
+        alias="cancellationInfo"
     )
 
     operation_time: AtomDateTime = Field(

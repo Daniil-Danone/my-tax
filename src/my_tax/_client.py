@@ -45,19 +45,33 @@ class AuthStorage(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Сериализация состояния авторизации
+# Сериализация состояния авторизации (сессия + device_id для refresh)
 # ---------------------------------------------------------------------------
 
-def _serialize_session(auth: AuthData) -> str:
-    """Сериализация сессии в JSON-строку."""
-    return auth.model_dump_json(by_alias=True)
+def _serialize_session(auth: AuthData, device_id: str) -> str:
+    """Сериализация сессии и device_id в JSON. API привязывает refresh к device."""
+    return json.dumps({
+        "session": auth.model_dump(mode="json", by_alias=True),
+        "device_id": device_id,
+    })
 
 
-def _deserialize_session(payload: Union[str, bytes]) -> Optional[AuthData]:
-    """Десериализация сессии из JSON-строки. При ошибке — None."""
+def _deserialize_session(
+    payload: Union[str, bytes],
+) -> Optional[tuple[AuthData, str]]:
+    """Десериализация из Redis. Возвращает (session, device_id) или None."""
     try:
         raw = payload.decode() if isinstance(payload, bytes) else payload
-        return AuthData.model_validate_json(raw)
+        data = json.loads(raw)
+        
+        if not isinstance(data, dict) or "session" not in data or "device_id" not in data:
+            return None
+        
+        session = AuthData.model_validate(data["session"])
+        device_id = str(data["device_id"])
+        
+        return (session, device_id)
+   
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
 
@@ -72,10 +86,11 @@ class MyTaxClient:
     Клиент API ЛК НПД.
 
     Поддерживает авторизацию по ИНН/паролю и по телефону + SMS.
-    При передаче redis (например redis.asyncio.Redis) и redis_key состояние
-    авторизации сохраняется в Redis и при следующем запросе подставляется
-    из кэша, если токен ещё действителен.
+    При передаче redis и redis_prefix состояние авторизации сохраняется
+    в Redis по ключу «{redis_prefix}:session» и подставляется из кэша при следующем запросе.
     """
+
+    SESSION_KEY = "session"
 
     def __init__(
         self,
@@ -86,7 +101,7 @@ class MyTaxClient:
         write_timeout: float = 5.0,
         connect_timeout: float = 5.0,
         redis: Optional[AuthStorage] = None,
-        redis_key: Optional[str] = None,
+        redis_prefix: Optional[str] = None,
         redis_ttl_seconds: Optional[int] = None,
     ) -> None:
         self._credentials = credentials
@@ -106,7 +121,7 @@ class MyTaxClient:
         self._phone_auth = PhoneSmsAuth(self._transport)
 
         self._redis = redis
-        self._redis_key = redis_key
+        self._redis_prefix = redis_prefix
         self._redis_ttl = redis_ttl_seconds
         self._refresh_lock = asyncio.Lock()
         self._user_api = UserApi(self)
@@ -161,24 +176,32 @@ class MyTaxClient:
             return self._password_auth
         return self._phone_auth
 
-    async def _load_session_from_redis(self) -> Optional[AuthData]:
-        """Загрузка сессии из Redis. При ошибке или отсутствии ключа — None."""
-        if not self._redis or not self._redis_key:
+    def _session_storage_key(self) -> str:
+        """Ключ Redis для сессии: «{prefix}:session»."""
+        return f"{self._redis_prefix}:{self.SESSION_KEY}"
+
+    async def _load_session_from_redis(self) -> Optional[tuple[AuthData, str]]:
+        """Загрузка сессии и device_id из Redis."""
+        if not self._redis or not self._redis_prefix:
             return None
 
-        raw = await self._redis.get(self._redis_key)
+        raw = await self._redis.get(self._session_storage_key())
         if not raw:
             return None
 
         return _deserialize_session(raw)
 
-    async def _save_session_to_redis(self, auth: AuthData) -> None:
-        """Сохранение сессии в Redis с опциональным TTL."""
-        if not self._redis or not self._redis_key:
+    async def _save_session_to_redis(
+        self, auth: AuthData, device_id: str
+    ) -> None:
+        """Сохранение сессии и device_id в Redis."""
+        if not self._redis or not self._redis_prefix:
             return
 
-        payload = _serialize_session(auth)
-        await self._redis.set(self._redis_key, payload, ex=self._redis_ttl)
+        payload = _serialize_session(auth, device_id)
+        await self._redis.set(
+            self._session_storage_key(), payload, ex=self._redis_ttl
+        )
 
     async def get_auth_headers(self, force_refresh: bool = False) -> dict[str, str]:
         """
@@ -190,9 +213,13 @@ class MyTaxClient:
         Результат при наличии redis сохраняется в кэш.
         """
         if not force_refresh:
-            cached = await self._load_session_from_redis()
-            if cached is not None and is_token_fresh(cached.token.access_expire_in):
-                return build_bearer_headers(cached.token.access_token)
+            loaded = await self._load_session_from_redis()
+            if loaded is not None:
+                session, device_id = loaded
+                auth = self._get_active_auth()
+                auth.restore_session(session, device_id=device_id)
+                if is_token_fresh(session.token.access_expire_in):
+                    return build_bearer_headers(session.token.access_token)
 
         auth = self._get_active_auth()
         if force_refresh and auth.is_authenticated:
@@ -201,7 +228,7 @@ class MyTaxClient:
 
         session = auth.session
         if session is not None:
-            await self._save_session_to_redis(session)
+            await self._save_session_to_redis(session, device_id=auth.device_id)
 
         return headers
 

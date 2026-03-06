@@ -21,7 +21,7 @@ async def main():
     async with MyTaxClient(
         credentials=credentials,
         redis=redis,
-        redis_key="my_tax:session:770000000000",
+        redis_prefix="my_tax:770000000000",
         redis_ttl_seconds=3600,  # TTL 1 час
     ) as client:
         # Первый запрос — авторизация + сохранение в Redis

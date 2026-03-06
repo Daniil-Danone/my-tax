@@ -47,7 +47,10 @@ def build_body_with_device(device_info: DeviceInfo, **kwargs: Any) -> Dict[str, 
 
 def is_token_fresh(expire_in: datetime) -> bool:
     """Проверка, что токен ещё действителен (с запасом по времени)."""
-    return expire_in > datetime.now(tz=timezone.utc) + ACCESS_TOKEN_LIFETIME
+    now = datetime.now(tz=timezone.utc)
+    if expire_in.tzinfo is None:
+        expire_in = expire_in.replace(tzinfo=timezone.utc)
+    return expire_in > now + ACCESS_TOKEN_LIFETIME
 
 
 def build_bearer_headers(access_token: str) -> Dict[str, str]:

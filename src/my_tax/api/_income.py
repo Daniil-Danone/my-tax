@@ -2,8 +2,8 @@
 API для чеков (Income).
 """
 
-from datetime import datetime
-from typing import List, Optional, Union, overload
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, overload
 
 from ._base import BaseApi
 
@@ -16,7 +16,6 @@ from ..types.income import (
     ListIncomes,
     SearchIncomes,
     CancelIncome,
-    CanceledIncome,
 )
 
 from ..enums.income import (
@@ -74,9 +73,9 @@ class IncomeApi(BaseApi):
             offset=offset,
         )
 
-        data = await self._request_post(
+        data = await self._request_get(
             path=INCOME_LIST_PATH,
-            json_data=request.model_dump(by_alias=True)
+            params=request.model_dump(mode="json", by_alias=True, exclude_none=True),
         )
 
         return ListIncomes.model_validate(data)
@@ -91,9 +90,9 @@ class IncomeApi(BaseApi):
             ListIncomes: Список чеков.
         """
 
-        data = await self._request_post(
+        data = await self._request_get(
             path=INCOME_LIST_PATH,
-            json_data=request.model_dump(by_alias=True),
+            params=request.model_dump(mode="json", by_alias=True, exclude_none=True),
         )
 
         return ListIncomes.model_validate(data)
@@ -101,8 +100,8 @@ class IncomeApi(BaseApi):
     @overload
     async def create(
         self,
-        service: CreateIncomeItem,
         *,
+        service: CreateIncomeItem,
         operation_time: Optional[datetime] = ...,
         client: Optional[CreateIncomeClient] = ...,
     ) -> Income: ...
@@ -110,6 +109,7 @@ class IncomeApi(BaseApi):
     @overload
     async def create(
         self,
+        *,
         services: List[CreateIncomeItem],
         operation_time: Optional[datetime] = ...,
         client: Optional[CreateIncomeClient] = ...,
@@ -117,8 +117,9 @@ class IncomeApi(BaseApi):
 
     async def create(
         self,
-        service_or_services: Union[CreateIncomeItem, List[CreateIncomeItem]],
         *,
+        service: Optional[CreateIncomeItem] = None,
+        services: Optional[List[CreateIncomeItem]] = None,
         operation_time: Optional[datetime] = None,
         client: Optional[CreateIncomeClient] = None,
     ) -> Income:
@@ -126,24 +127,27 @@ class IncomeApi(BaseApi):
         Создать чек.
 
         Args:
-            service_or_services: Услуга или список услуг.
+            service: Одна услуга (передать service или services).
+            services: Список услуг (передать service или services).
             operation_time: Время операции (по умолчанию — сейчас).
             client: Данные клиента (по умолчанию — физ. лицо).
 
         Returns:
             Income: Созданный чек.
         """
-
-        services = (
-            [service_or_services]
-            if isinstance(service_or_services, CreateIncomeItem)
-            else service_or_services
-        )
+        if service is not None:
+            services_list = [service]
+        elif services is not None:
+            services_list = services
+        else:
+            raise TypeError(
+                "create() missing required argument: pass 'service' or 'services'"
+            )
 
         request = CreateIncome(
             operation_time=operation_time or atom_datetime_now(),
             request_time=atom_datetime_now(),
-            services=services,
+            services=services_list,
             client=client or CreateIncomeClient(),
             payment_type=IncomePaymentType.CASH,
             ignore_max_total_income_restriction=False,
@@ -155,19 +159,34 @@ class IncomeApi(BaseApi):
         """
         Создать чек по полной модели запроса.
 
-        Args:
-            request: CreateIncome (сервисы, клиент, реквизиты).
-
-        Returns:
-            Income: Созданный чек.
+        После POST запрашивается список чеков и возвращается полный объект
+        созданного чека (ответ создания содержит только approvedReceiptUuid).
         """
-
         data = await self._request_post(
             path=INCOME_PATH,
-            json_data=request.model_dump(by_alias=True)
+            json_data=request.model_dump(mode="json", by_alias=True),
         )
+        
+        receipt_uuid = data.get("approvedReceiptUuid") or data.get("receiptUuid")
+        if not receipt_uuid:
+            raise ValueError(
+                "Ответ создания чека не содержит approvedReceiptUuid"
+            )
 
-        return Income.model_validate(data)
+        now = datetime.now(tz=timezone.utc)
+        list_res = await self.get_list(
+            from_date=now - timedelta(minutes=5),
+            to_date=now + timedelta(minutes=1),
+            status=SearchIncomesStatusFilter.REGISTERED,
+            limit=50,
+        )
+        for income in list_res.content:
+            if income.uuid == receipt_uuid:
+                return income
+
+        raise ValueError(
+            f"Чек с uuid {receipt_uuid!r} не найден в списке после создания"
+        )
 
     async def cancel(
         self,
@@ -176,9 +195,12 @@ class IncomeApi(BaseApi):
         operation_time: Optional[datetime] = None,
         request_time: Optional[datetime] = None,
         partner_code: Optional[str] = None,
-    ) -> CanceledIncome:
+    ) -> Income:
         """
         Отменить чек.
+
+        После POST /cancel запрашивается список чеков и возвращается
+        полный объект отменённого чека (с cancellationInfo).
 
         Args:
             receipt_uuid: UUID чека.
@@ -188,9 +210,8 @@ class IncomeApi(BaseApi):
             partner_code: Код партнёра (опционально).
 
         Returns:
-            CanceledIncome: Отмененный чек.
+            Income: Отменённый чек с cancellationInfo.
         """
-
         uuid_stripped = (receipt_uuid or "").strip()
         if not uuid_stripped:
             raise ValueError("UUID чека не может быть пустым")
@@ -203,12 +224,25 @@ class IncomeApi(BaseApi):
             partner_code=partner_code,
         )
 
-        data = await self._request_post(
+        await self._request_post(
             path=INCOME_CANCEL_PATH,
-            json_data=request.model_dump(by_alias=True)
+            json_data=request.model_dump(mode="json", by_alias=True),
         )
 
-        return CanceledIncome.model_validate(data.get("incomeInfo"))
+        now = datetime.now(tz=timezone.utc)
+        list_res = await self.get_list(
+            from_date=now - timedelta(days=30),
+            to_date=now + timedelta(minutes=1),
+            status=SearchIncomesStatusFilter.CANCELED,
+            limit=50,
+        )
+        for income in list_res.content:
+            if income.uuid == uuid_stripped:
+                return income
+
+        raise ValueError(
+            f"Чек с uuid {uuid_stripped!r} не найден в списке после отмены"
+        )
 
     async def print_receipt(self, inn: str, receipt_uuid: str) -> bytes:
         """

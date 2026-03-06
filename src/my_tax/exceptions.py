@@ -112,6 +112,21 @@ class BaseDomainException(Exception):
             return "[Failed to read response body]"
 
 
+def api_error_message(response: httpx.Response, max_body: int = 2000) -> str:
+    """
+    Сообщение об ошибке API с кодом, URL и телом ответа для диагностики 4xx/5xx.
+    """
+    status = response.status_code
+    url = str(response.url)
+    try:
+        body = response.text[:max_body] if response.text else ""
+        if len(response.text or "") > max_body:
+            body += "..."
+    except Exception:
+        body = "[не удалось прочитать тело ответа]"
+    return f"{status} {response.reason_phrase} for {url} — response: {body}"
+
+
 class AuthorizationError(BaseDomainException):
     """Исключение при ошибке авторизации."""
 
@@ -122,3 +137,18 @@ class AccessTokenNotFoundError(BaseDomainException):
 
 class SmsChallengeError(BaseDomainException):
     """Исключение при ошибке SMS-челленджа."""
+
+
+class ApiRequestError(BaseDomainException):
+    """
+    Исключение при ошибке HTTP-запроса к API (4xx/5xx).
+
+    В message входят status_code, url и тело ответа — по ним видно причину отказа API.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        response: httpx.Response | None = None,
+    ) -> None:
+        super().__init__(message, response=response)

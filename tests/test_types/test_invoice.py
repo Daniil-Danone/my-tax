@@ -53,13 +53,14 @@ class TestCreateInvoiceClientValidator:
 
 class TestCreateInvoiceItem:
     def test_decimal_serialization(self):
-        item = CreateInvoiceItem(name="Svc", amount=Decimal("500"), quantity=Decimal("3"))
+        """amount — число (float), quantity — целое (API: Integer)."""
+        item = CreateInvoiceItem(name="Svc", amount=Decimal("500"), quantity=3)
         dumped = item.model_dump()
-        assert dumped["amount"] == "500"
-        assert dumped["quantity"] == "3"
+        assert dumped["amount"] == 500.0
+        assert dumped["quantity"] == 3
 
     def test_get_total(self):
-        item = CreateInvoiceItem(name="Svc", amount=Decimal("250"), quantity=Decimal("4"))
+        item = CreateInvoiceItem(name="Svc", amount=Decimal("250"), quantity=4)
         assert item.get_total() == Decimal("1000")
 
 
@@ -78,7 +79,7 @@ class TestCreateInvoice:
         assert inv.total_amount == str(Decimal("10000"))
 
     def test_legal_entity_requires_inn(self):
-        item = CreateInvoiceItem(name="Svc", amount=Decimal("100"), quantity=Decimal("1"))
+        item = CreateInvoiceItem(name="Svc", amount=Decimal("100"), quantity=1)
         with pytest.raises(ValidationError, match="ИНН клиента не может быть пустым"):
             CreateInvoice(
                 payment_type=PaymentMethodType.PHONE,

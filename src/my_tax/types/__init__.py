@@ -17,7 +17,7 @@ from .income import (
     IncomeItem,
     ListIncomes,
     SearchIncomes,
-    CancelationInfo,
+    CancellationInfo,
     CancelIncome,
     CanceledIncome,
 )
@@ -58,7 +58,7 @@ __all__ = [
     "IncomeItem",
     "ListIncomes",
     "SearchIncomes",
-    "CancelationInfo",
+    "CancellationInfo",
     "CancelIncome",
     "CanceledIncome",
     

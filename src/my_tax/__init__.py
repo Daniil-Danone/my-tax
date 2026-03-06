@@ -4,6 +4,7 @@ from ._client import MyTaxClient
 
 from .exceptions import (
     AccessTokenNotFoundError,
+    ApiRequestError,
     AuthorizationError,
     BaseDomainException,
     SmsChallengeError,
@@ -27,7 +28,7 @@ from .types import (
     IncomeItem,
     ListIncomes,
     SearchIncomes,
-    CancelationInfo,
+    CancellationInfo,
     CancelIncome,
     CanceledIncome,
 
@@ -64,6 +65,7 @@ __all__ = [
     "BaseDomainException",
     "AuthorizationError",
     "AccessTokenNotFoundError",
+    "ApiRequestError",
     "SmsChallengeError",
 
     # -------------------------
@@ -85,7 +87,7 @@ __all__ = [
     "IncomeItem",
     "ListIncomes",
     "SearchIncomes",
-    "CancelationInfo",
+    "CancellationInfo",
     "CancelIncome",
     "CanceledIncome",
 

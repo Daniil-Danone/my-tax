@@ -35,9 +35,10 @@ class CreateInvoiceItem(BaseModel):
         description="Стоимость услуги"
     )
 
-    quantity: PositiveDecimal = Field(
+    quantity: int = Field(
         ...,
-        description="Количество"
+        ge=1,
+        description="Количество (API принимает только целое число)"
     )
 
     service_number: int = Field(
@@ -47,10 +48,10 @@ class CreateInvoiceItem(BaseModel):
         serialization_alias="serviceNumber",
     )
 
-    @field_serializer("amount", "quantity")
-    def serialize_decimal(self, value: Decimal) -> Union[str, float]:
-        """Сериализация Decimal в строку или число для API."""
-        return str(value)
+    @field_serializer("amount")
+    def serialize_amount(self, value: Decimal) -> float:
+        """Стоимость в JSON как число."""
+        return float(value)
 
     def get_total(self) -> Decimal:
         """Общая стоимость позиции (amount * quantity)."""

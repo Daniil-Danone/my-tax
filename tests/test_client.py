@@ -64,19 +64,28 @@ class TestProperties:
 
 class TestSessionSerialization:
     def test_serialize_deserialize_roundtrip(self, sample_auth_data):
-        serialized = _serialize_session(sample_auth_data)
+        device_id = "test-device-123"
+        serialized = _serialize_session(sample_auth_data, device_id)
         restored = _deserialize_session(serialized)
         assert restored is not None
-        assert restored.inn == sample_auth_data.inn
-        assert restored.token.access_token == sample_auth_data.token.access_token
+        session, restored_device_id = restored
+        assert session.inn == sample_auth_data.inn
+        assert session.token.access_token == sample_auth_data.token.access_token
+        assert restored_device_id == device_id
 
     def test_deserialize_invalid_json(self):
         assert _deserialize_session("not json") is None
 
+    def test_deserialize_old_format_returns_none(self, sample_auth_data):
+        """Формат без session/device_id не поддерживается."""
+        raw = sample_auth_data.model_dump_json(by_alias=True)
+        assert _deserialize_session(raw) is None
+
     def test_deserialize_bytes(self, sample_auth_data):
-        serialized = _serialize_session(sample_auth_data).encode()
+        serialized = _serialize_session(sample_auth_data, "dev-1").encode()
         restored = _deserialize_session(serialized)
         assert restored is not None
+        assert restored[1] == "dev-1"
 
 
 # ---------------------------------------------------------------------------
@@ -89,12 +98,13 @@ class TestRedisCache:
         client = MyTaxClient(
             credentials=Credentials(username="u", password="p"),
             redis=redis,
-            redis_key="test:session",
+            redis_prefix="test",
         )
 
-        # Manually save session
+        # Manually save session (key = prefix:session)
         from my_tax._client import _serialize_session
-        await redis.set("test:session", _serialize_session(sample_auth_data))
+        payload = _serialize_session(sample_auth_data, "saved-device-id")
+        await redis.set("test:session", payload)
 
         # Should load from cache
         headers = await client.get_auth_headers()
