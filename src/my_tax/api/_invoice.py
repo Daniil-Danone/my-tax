@@ -125,6 +125,57 @@ class InvoiceApi(BaseApi):
 
         return ListInvoices.model_validate(data)
 
+    async def get_by_id(
+        self,
+        invoice_id: Union[str, int],
+        *,
+        operation_date: Optional[datetime] = None,
+        status: Optional[InvoiceStatusFilter] = None,
+        page_size: int = 50,
+    ) -> Invoice:
+        """
+        Получить счёт по ID с итерацией по страницам списка.
+
+        Args:
+            invoice_id: ID счёта (str или int).
+            operation_date: Дата операции (сужает диапазон поиска).
+            status: Фильтр по статусу.
+            page_size: Размер страницы при итерации.
+
+        Returns:
+            Invoice: Найденный счёт.
+
+        Raises:
+            ValueError: Счёт не найден.
+        """
+        invoice_id_int = int(str(invoice_id).strip())
+
+        if operation_date is not None:
+            from_date = operation_date - timedelta(minutes=5)
+            to_date = operation_date + timedelta(minutes=5)
+        else:
+            from_date = None
+            to_date = None
+
+        offset = 0
+        while True:
+            list_res = await self.get_list(
+                from_date=from_date,
+                to_date=to_date,
+                status=status,
+                limit=page_size,
+                offset=offset,
+            )
+            for inv in list_res.items:
+                if inv.invoice_id == invoice_id_int:
+                    return inv
+
+            if not list_res.has_more:
+                break
+            offset += page_size
+
+        raise ValueError(f"Счёт с id {invoice_id_int!r} не найден")
+
     @overload
     async def create(
         self,
@@ -202,30 +253,15 @@ class InvoiceApi(BaseApi):
         )
         
         raw_id = data.get("invoiceId")
-        invoice_id = int(raw_id) if raw_id is not None else None
-        uuid_str = data.get("uuid")
-        
-        if invoice_id is None and not uuid_str:
+        if raw_id is None:
             raise ValueError(
-                "Ответ создания счёта не содержит invoiceId или uuid"
+                "Ответ создания счёта не содержит invoiceId"
             )
 
-        now = datetime.now(tz=timezone.utc)
-        list_res = await self.get_list(
-            from_date=now - timedelta(minutes=5),
-            to_date=now + timedelta(minutes=1),
+        return await self.get_by_id(
+            int(raw_id),
+            operation_date=datetime.now(tz=timezone.utc),
             status=InvoiceStatusFilter.CREATED,
-            limit=50,
-        )
-        for inv in list_res.items:
-            if invoice_id is not None and inv.invoice_id == invoice_id:
-                return inv
-            if uuid_str and inv.uuid == uuid_str:
-                return inv
-
-        raise ValueError(
-            f"Счёт (invoiceId={invoice_id!r}, uuid={uuid_str!r}) не найден "
-            "в списке после создания"
         )
 
     async def cancel(self, invoice_id: Union[str, int]) -> Invoice:
@@ -253,19 +289,9 @@ class InvoiceApi(BaseApi):
             path=INVOICE_CANCEL_PATH.format(invoice_id=invoice_id_str),
         )
 
-        now = datetime.now(tz=timezone.utc)
-        list_res = await self.get_list(
-            from_date=now - timedelta(days=30),
-            to_date=now + timedelta(minutes=1),
+        return await self.get_by_id(
+            invoice_id_int,
             status=InvoiceStatusFilter.CANCELLED,
-            limit=50,
-        )
-        for inv in list_res.items:
-            if inv.invoice_id == invoice_id_int:
-                return inv
-
-        raise ValueError(
-            f"Счёт с id {invoice_id_str!r} не найден в списке после отмены"
         )
 
     async def print_invoice(self, invoice_uuid: str) -> bytes:

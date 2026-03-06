@@ -97,6 +97,60 @@ class IncomeApi(BaseApi):
 
         return ListIncomes.model_validate(data)
 
+    async def get_by_uuid(
+        self,
+        receipt_uuid: str,
+        *,
+        operation_date: Optional[datetime] = None,
+        status: Optional[SearchIncomesStatusFilter] = None,
+        page_size: int = 50,
+    ) -> Income:
+        """
+        Получить чек по UUID с итерацией по страницам списка.
+
+        Args:
+            receipt_uuid: UUID чека.
+            operation_date: Дата операции (сужает диапазон поиска).
+            status: Фильтр по статусу (REGISTERED / CANCELLED).
+            page_size: Размер страницы при итерации.
+
+        Returns:
+            Income: Найденный чек.
+
+        Raises:
+            ValueError: Чек не найден.
+        """
+        if not receipt_uuid or not receipt_uuid.strip():
+            raise ValueError("UUID чека не может быть пустым")
+
+        receipt_uuid = receipt_uuid.strip()
+
+        if operation_date is not None:
+            from_date = operation_date - timedelta(minutes=5)
+            to_date = operation_date + timedelta(minutes=5)
+        else:
+            from_date = None
+            to_date = None
+
+        offset = 0
+        while True:
+            list_res = await self.get_list(
+                from_date=from_date,
+                to_date=to_date,
+                status=status,
+                limit=page_size,
+                offset=offset,
+            )
+            for income in list_res.content:
+                if income.uuid == receipt_uuid:
+                    return income
+
+            if not list_res.has_more:
+                break
+            offset += page_size
+
+        raise ValueError(f"Чек с uuid {receipt_uuid!r} не найден")
+
     @overload
     async def create(
         self,
@@ -166,26 +220,17 @@ class IncomeApi(BaseApi):
             path=INCOME_PATH,
             json_data=request.model_dump(mode="json", by_alias=True),
         )
-        
+
         receipt_uuid = data.get("approvedReceiptUuid") or data.get("receiptUuid")
         if not receipt_uuid:
             raise ValueError(
                 "Ответ создания чека не содержит approvedReceiptUuid"
             )
 
-        now = datetime.now(tz=timezone.utc)
-        list_res = await self.get_list(
-            from_date=now - timedelta(minutes=5),
-            to_date=now + timedelta(minutes=1),
+        return await self.get_by_uuid(
+            receipt_uuid,
+            operation_date=datetime.now(tz=timezone.utc),
             status=SearchIncomesStatusFilter.REGISTERED,
-            limit=50,
-        )
-        for income in list_res.content:
-            if income.uuid == receipt_uuid:
-                return income
-
-        raise ValueError(
-            f"Чек с uuid {receipt_uuid!r} не найден в списке после создания"
         )
 
     async def cancel(
@@ -229,19 +274,10 @@ class IncomeApi(BaseApi):
             json_data=request.model_dump(mode="json", by_alias=True),
         )
 
-        now = datetime.now(tz=timezone.utc)
-        list_res = await self.get_list(
-            from_date=now - timedelta(days=30),
-            to_date=now + timedelta(minutes=1),
+        return await self.get_by_uuid(
+            uuid_stripped,
+            operation_date=request.operation_time,
             status=SearchIncomesStatusFilter.CANCELED,
-            limit=50,
-        )
-        for income in list_res.content:
-            if income.uuid == uuid_stripped:
-                return income
-
-        raise ValueError(
-            f"Чек с uuid {uuid_stripped!r} не найден в списке после отмены"
         )
 
     async def print_receipt(self, inn: str, receipt_uuid: str) -> bytes:
