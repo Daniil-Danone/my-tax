@@ -269,14 +269,22 @@ class IncomeApi(BaseApi):
             partner_code=partner_code,
         )
 
-        await self._request_post(
+        data = await self._request_post(
             path=INCOME_CANCEL_PATH,
             json_data=request.model_dump(mode="json", by_alias=True),
         )
 
+        income_info = data.get("incomeInfo") or data
+        op_time_raw = income_info.get("operationTime")
+        op_date = (
+            datetime.fromisoformat(op_time_raw)
+            if op_time_raw
+            else request.operation_time
+        )
+
         return await self.get_by_uuid(
             uuid_stripped,
-            operation_date=request.operation_time,
+            operation_date=op_date,
             status=SearchIncomesStatusFilter.CANCELED,
         )
 
