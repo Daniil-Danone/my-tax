@@ -1,11 +1,18 @@
 """HTTP-транспорт на базе httpx.AsyncClient."""
 
-from typing import Optional
+from typing import Optional, Union
 
 import httpx
 from httpx import Timeout
 
 from .constants import BASE_URL_V1, DEFAULT_HEADERS
+
+
+# Тип прокси совместим с httpx.AsyncClient(proxy=...):
+# - str: "http://user:pass@host:port" или "socks5://host:port"
+# - httpx.Proxy: для тонкой настройки (auth, headers)
+# - None: без прокси
+ProxyType = Optional[Union[str, httpx.Proxy]]
 
 
 class Transport:
@@ -19,7 +26,20 @@ class Transport:
         connect_timeout: float = 5.0,
         read_timeout: float = 5.0,
         write_timeout: float = 5.0,
+        proxy: ProxyType = None,
+        verify: Union[bool, str] = True,
     ) -> None:
+        """
+        Args:
+            base_url: базовый URL API (по умолчанию lknpd.nalog.ru).
+            headers: дополнительные заголовки (мерджатся поверх DEFAULT_HEADERS).
+            timeout/connect_timeout/read_timeout/write_timeout: таймауты в секундах.
+            proxy: прокси для всех запросов. Принимает URL-строку
+                (`"http://user:pass@host:port"`, `"socks5://host:port"`) или
+                `httpx.Proxy`. Актуально для деплоя вне РФ —
+                lknpd.nalog.ru доступен только с российских IP.
+            verify: параметр httpx для проверки SSL (True/False/путь к ca-bundle).
+        """
         self._base_url = base_url.rstrip("/")
         self._headers = {**DEFAULT_HEADERS, **(headers or {})}
         self._client = httpx.AsyncClient(
@@ -31,6 +51,8 @@ class Transport:
                 read=read_timeout,
                 write=write_timeout,
             ),
+            proxy=proxy,
+            verify=verify,
         )
 
     async def post(

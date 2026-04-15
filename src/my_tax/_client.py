@@ -12,7 +12,7 @@ from typing import Any, Optional, Protocol, Union
 
 import httpx
 
-from ._transport import Transport
+from ._transport import Transport, ProxyType
 from ._auth import PasswordAuth, PhoneSmsAuth
 from .api._user import UserApi
 from .api._income import IncomeApi
@@ -103,7 +103,21 @@ class MyTaxClient:
         redis: Optional[AuthStorage] = None,
         redis_prefix: Optional[str] = None,
         redis_ttl_seconds: Optional[int] = None,
+        proxy: ProxyType = None,
+        verify: Union[bool, str] = True,
     ) -> None:
+        """
+        Args:
+            credentials: ИНН/пароль для PasswordAuth. Можно не передавать, если
+                используется авторизация по телефону (phone_auth).
+            timeout/connect_timeout/read_timeout/write_timeout: таймауты httpx.
+            redis/redis_prefix/redis_ttl_seconds: опциональное кэширование сессии.
+            proxy: прокси для всех запросов к lknpd.nalog.ru. Принимает URL-строку
+                (`"http://user:pass@host:port"`, `"socks5://host:port"`) или
+                `httpx.Proxy`. Обязателен при деплое вне РФ — API ФНС
+                доступен только с российских IP.
+            verify: проверка SSL (True/False/путь к ca-bundle).
+        """
         self._credentials = credentials
 
         self._transport = Transport(
@@ -111,6 +125,8 @@ class MyTaxClient:
             connect_timeout=connect_timeout,
             read_timeout=read_timeout,
             write_timeout=write_timeout,
+            proxy=proxy,
+            verify=verify,
         )
 
         self._password_auth: Optional[PasswordAuth] = (
