@@ -40,6 +40,21 @@ from .payment_method import (
     ListPaymentMethods,
 )
 
+from .tax import (
+    TaxRate,
+    TaxBonus,
+    TaxEstimate,
+    TaxSummary,
+    TaxCharge,
+    TaxHistory,
+    TaxPayment,
+    TaxPayments,
+    Region,
+    ListRegions,
+    rate_for,
+    estimate_tax,
+)
+
 __all__ = [
     # ===   Auth   ==== 
     
@@ -75,8 +90,23 @@ __all__ = [
     "SearchInvoicesFilterItem",
     "InvoiceReceipt",
     
-    # ===   Payment Method   ==== 
-    
+    # ===   Payment Method   ====
+
     "PaymentMethod",
     "ListPaymentMethods",
+
+    # ===   Tax   ====
+
+    "TaxRate",
+    "TaxBonus",
+    "TaxEstimate",
+    "TaxSummary",
+    "TaxCharge",
+    "TaxHistory",
+    "TaxPayment",
+    "TaxPayments",
+    "Region",
+    "ListRegions",
+    "rate_for",
+    "estimate_tax",
 ]

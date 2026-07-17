@@ -5,6 +5,7 @@ from ._user import UserApi
 from ._income import IncomeApi
 from ._invoice import InvoiceApi
 from ._payment_method import PaymentMethodApi
+from ._tax import TaxApi
 
 __all__ = [
     "BaseApi",
@@ -13,4 +14,5 @@ __all__ = [
     "IncomeApi",
     "InvoiceApi",
     "PaymentMethodApi",
+    "TaxApi",
 ]

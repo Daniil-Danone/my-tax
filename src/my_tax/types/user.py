@@ -120,6 +120,12 @@ class User(BaseModel):
         alias="registerAvailable"
     )
 
+    registration_oktmo_code: Optional[str] = Field(
+        default=None,
+        description="Код ОКТМО региона постановки на учёт",
+        alias="registrationOktmoCode"
+    )
+
     def is_avatar_exists(self) -> bool:
         """Проверка, существует ли аватар пользователя"""
         return self.avatar_exists

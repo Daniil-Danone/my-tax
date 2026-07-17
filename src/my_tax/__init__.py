@@ -49,6 +49,21 @@ from .types import (
 
     PaymentMethod,
     ListPaymentMethods,
+
+    # ===   Tax   ====
+
+    TaxRate,
+    TaxBonus,
+    TaxEstimate,
+    TaxSummary,
+    TaxCharge,
+    TaxHistory,
+    TaxPayment,
+    TaxPayments,
+    Region,
+    ListRegions,
+    rate_for,
+    estimate_tax,
 )
 
 __all__ = [
@@ -106,4 +121,18 @@ __all__ = [
     # ===   Payment Method   ====
     "PaymentMethod",
     "ListPaymentMethods",
+
+    # ===   Tax   ====
+    "TaxRate",
+    "TaxBonus",
+    "TaxEstimate",
+    "TaxSummary",
+    "TaxCharge",
+    "TaxHistory",
+    "TaxPayment",
+    "TaxPayments",
+    "Region",
+    "ListRegions",
+    "rate_for",
+    "estimate_tax",
 ]

@@ -19,6 +19,9 @@
 | 📄 **Счета (Invoice)** | Создание, список с поиском, отмена |
 | 💳 **Способы оплаты** | Получение справочника (банковские счета, телефоны) |
 | 👤 **Профиль** | Получение данных пользователя и аватара |
+| 💰 **Налог** | Сводка (к оплате, долг, пени), начисления по периодам, платежи |
+| 🎁 **Бонус (вычет)** | Остаток налогового бонуса и расчёт списания |
+| 📊 **Ставка** | Определение ставки (4%/6%) и расчёт налога по операции |
 | 🔄 **Автоматический retry при 401** | Обновление токена и повтор запроса под `asyncio.Lock` |
 | 💾 **Кэширование сессии в Redis** | Переиспользование токена между запусками |
 | 🛡️ **Маскирование чувствительных данных** | Токены, пароли, ключи не попадают в логи |
@@ -263,6 +266,90 @@ print(f"Дата регистрации: {user.registration_date}")
 
 ---
 
+### 💰 Налог (Tax)
+
+#### Сводка и бонус
+
+```python
+summary = await client.tax.get_summary()
+
+print(f"К оплате: {summary.total_for_payment} ₽")
+print(f"Налог: {summary.tax} ₽")
+print(f"Задолженность: {summary.debt} ₽")
+print(f"Пени: {summary.penalty} ₽")
+
+bonus = await client.tax.get_bonus()
+
+print(f"Остаток бонуса: {bonus.amount} из {bonus.limit} ₽")
+print(f"Израсходовано: {bonus.spent} ₽")
+```
+
+#### Начисления по периодам
+
+Налог, списанный бонус и срок уплаты ФНС раскрывает только здесь — агрегатом
+по налоговому периоду и ОКТМО:
+
+```python
+history = await client.tax.get_history()
+
+for charge in history.records:
+    print(
+        f"{charge.tax_period_id}: налог {charge.tax_amount} ₽, "
+        f"бонус −{charge.bonus_amount} ₽, "
+        f"к уплате {charge.unpaid_amount} ₽ до {charge.due_date:%d.%m.%Y}"
+    )
+
+print(f"Задекларировано всего: {history.get_total_base()} ₽")
+```
+
+#### Платежи
+
+```python
+payments = await client.tax.get_payments(only_paid=True)
+
+print(f"Оплачено всего: {payments.get_total()} ₽")
+```
+
+#### Ставка и расчёт налога по операции
+
+API ставку не отдаёт — её определяет тип клиента в чеке. Бонус гасит 1 п.п.
+по доходам от физлиц и 2 п.п. по доходам от юрлиц, поэтому пока бонус не
+исчерпан, эффективная ставка — 3% и 4%:
+
+```python
+from decimal import Decimal
+from my_tax import rate_for, estimate_tax
+from my_tax.enums.general import ClientType
+
+rate = rate_for(ClientType.FROM_LEGAL_ENTITY)
+print(f"Ставка: {rate.rate:.0%}, с бонусом: {rate.effective_rate:.0%}")   # 6%, с бонусом: 4%
+
+estimate = estimate_tax(Decimal("2500"), ClientType.FROM_LEGAL_ENTITY)
+print(f"{estimate.nominal_tax} ₽ − {estimate.bonus_applied} ₽ = {estimate.tax} ₽")  # 150.00 ₽ − 50.00 ₽ = 100.00 ₽
+```
+
+Списание ограничено остатком бонуса — передайте его, чтобы расчёт был честным:
+
+```python
+bonus = await client.tax.get_bonus()
+estimate = estimate_tax(Decimal("2500"), ClientType.FROM_LEGAL_ENTITY, bonus_available=bonus.amount)
+```
+
+> ⚠️ `estimate_tax()` — **оценка**. ФНС не раскрывает налог в разрезе отдельного
+> чека и начисляет налог раз в месяц. Фактические суммы — только в `get_history()`.
+
+#### Регионы
+
+```python
+regions = await client.tax.get_regions()
+
+user = await client.user.get_user()
+region = regions.find_by_oktmo(user.registration_oktmo_code)
+print(f"Регион: {region.name}")
+```
+
+---
+
 ## 🔄 Кэширование сессии в Redis
 
 При передаче `redis` и `redis_prefix` сессия сохраняется по ключу `{redis_prefix}:session` и при следующем запросе подставляется из кэша (без повторной авторизации).
@@ -323,7 +410,7 @@ src/my_tax/
 ├── _transport.py             # HTTP-транспорт (httpx.AsyncClient)
 ├── _auth.py                  # PasswordAuth, PhoneSmsAuth
 ├── _helpers.py               # Утилиты (device_id, token freshness, headers)
-├── constants.py              # URL API, пути
+├── constants.py              # URL API, пути, ставки НПД и лимит бонуса
 ├── exceptions.py             # Иерархия исключений + маскирование данных
 ├── logger.py                 # Настройка логгера
 ├── enums/
@@ -336,13 +423,15 @@ src/my_tax/
 │   ├── user.py               # User
 │   ├── income.py             # CreateIncome, Income, ListIncomes, CancelIncome, ...
 │   ├── invoice.py            # CreateInvoice, Invoice, ListInvoices, ...
-│   └── payment_method.py     # PaymentMethod, ListPaymentMethods
+│   ├── payment_method.py     # PaymentMethod, ListPaymentMethods
+│   └── tax.py                # TaxRate, TaxBonus, TaxSummary, TaxCharge, rate_for, estimate_tax
 └── api/
     ├── _base.py              # BaseApi, RequestClient (протокол)
     ├── _user.py              # UserApi (get_user, get_avatar)
     ├── _income.py            # IncomeApi (create, get_list, cancel)
     ├── _invoice.py           # InvoiceApi (create, get_list, cancel)
-    └── _payment_method.py    # PaymentMethodApi (get_table)
+    ├── _payment_method.py    # PaymentMethodApi (get_table)
+    └── _tax.py               # TaxApi (get_summary, get_bonus, get_history, get_payments)
 ```
 
 ---

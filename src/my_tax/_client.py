@@ -18,6 +18,7 @@ from .api._user import UserApi
 from .api._income import IncomeApi
 from .api._invoice import InvoiceApi
 from .api._payment_method import PaymentMethodApi
+from .api._tax import TaxApi
 from ._helpers import build_bearer_headers, is_token_fresh
 from .types import AuthData, Credentials, User
 
@@ -144,6 +145,7 @@ class MyTaxClient:
         self._income_api = IncomeApi(self)
         self._invoice_api = InvoiceApi(self)
         self._payment_type_api = PaymentMethodApi(self)
+        self._tax_api = TaxApi(self)
 
     async def __aenter__(self) -> "MyTaxClient":
         return self
@@ -185,6 +187,11 @@ class MyTaxClient:
     def payment_type(self) -> PaymentMethodApi:
         """Ручки API для справочника способов оплаты (payment-type/table)."""
         return self._payment_type_api
+
+    @property
+    def tax(self) -> TaxApi:
+        """Ручки API для налога (бонус, сводка, начисления, платежи)."""
+        return self._tax_api
 
     def _get_active_auth(self) -> Union[PasswordAuth, PhoneSmsAuth]:
         """Возвращает активную стратегию авторизации (пароль или телефон)."""
