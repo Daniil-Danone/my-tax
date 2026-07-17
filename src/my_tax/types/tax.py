@@ -289,7 +289,7 @@ class TaxCharge(BaseModel):
 
     tax_amount: Decimal = Field(
         ...,
-        description="Начисленный налог, ₽",
+        description="Налог к уплате за период (уже за вычетом бонуса), ₽",
         alias="taxAmount"
     )
 
@@ -368,14 +368,26 @@ class TaxCharge(BaseModel):
 
     @computed_field
     @property
+    def nominal_tax(self) -> Decimal:
+        """
+        Налог по полной ставке, до вычета бонуса, ₽.
+
+        API отдаёт taxAmount уже за вычетом бонуса, поэтому номинал восстанавливается
+        как taxAmount + bonusAmount.
+        """
+        return self.tax_amount + self.bonus_amount
+
+    @computed_field
+    @property
     def unpaid_amount(self) -> Decimal:
         """
         Остаток к уплате за период, ₽.
 
-        tax_amount — налог по полной ставке, бонус его гасит: к уплате остаётся
-        tax_amount − bonus_amount (именно эту сумму ЛК показывает как «К оплате»).
+        tax_amount — уже сумма за вычетом бонуса (именно её ЛК показывает как
+        «К оплате» и отдаёт в /taxes totalForPayment), поэтому остаток — это
+        tax_amount − paid_amount.
         """
-        return max(Decimal("0"), self.tax_amount - self.bonus_amount - self.paid_amount)
+        return max(Decimal("0"), self.tax_amount - self.paid_amount)
 
     def is_paid(self) -> bool:
         """Проверка, погашено ли начисление"""
@@ -385,8 +397,8 @@ class TaxCharge(BaseModel):
         """
         Налоговая база за период, ₽.
 
-        API часто не отдаёт taxBaseAmount — тогда база выводится из начисленного
-        налога и ставки (tax_amount = база × ставка).
+        API часто не отдаёт taxBaseAmount — тогда база выводится из номинального
+        налога и ставки (номинал = база × ставка).
         """
         if self.tax_base_amount is not None:
             return self.tax_base_amount
@@ -394,20 +406,21 @@ class TaxCharge(BaseModel):
         rate = rate_for(client_type).rate
         if rate <= 0:
             return Decimal("0")
-        return _kopecks(self.tax_amount / rate)
+        return _kopecks(self.nominal_tax / rate)
 
     def get_bonus_ratio(self, client_type: ClientType = ClientType.FROM_INDIVIDUAL) -> Decimal:
         """
         Доля, с которой бонус применялся в периоде: 1 — полностью, 0 — не применялся.
 
-        Полный бонус за период — это tax_amount × (ставка_бонуса / ставка), так что
-        доля считается без налоговой базы, которую API может не отдать.
+        Полный бонус за период — это номинал × (ставка_бонуса / ставка). Номинал
+        восстанавливается из taxAmount + bonusAmount, поэтому база (которую API
+        может не отдать) для расчёта не нужна.
         """
         tax_rate = rate_for(client_type)
-        if self.tax_amount <= 0 or tax_rate.rate <= 0:
+        if self.nominal_tax <= 0 or tax_rate.rate <= 0:
             return Decimal("0")
 
-        full_bonus = self.tax_amount * (tax_rate.bonus_rate / tax_rate.rate)
+        full_bonus = self.nominal_tax * (tax_rate.bonus_rate / tax_rate.rate)
         if full_bonus <= 0:
             return Decimal("0")
 
@@ -425,8 +438,12 @@ class TaxHistory(BaseModel):
     )
 
     def get_total_tax(self) -> Decimal:
-        """Суммарный начисленный налог, ₽"""
+        """Суммарный налог к уплате (за вычетом бонуса), ₽"""
         return sum((record.tax_amount for record in self.records), Decimal("0"))
+
+    def get_total_nominal_tax(self) -> Decimal:
+        """Суммарный налог по полной ставке (до вычета бонуса), ₽"""
+        return sum((record.nominal_tax for record in self.records), Decimal("0"))
 
     def get_total_bonus(self) -> Decimal:
         """Суммарно списано бонуса, ₽"""
