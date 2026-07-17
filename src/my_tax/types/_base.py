@@ -71,6 +71,16 @@ def _optional_str_non_empty(v: str | None) -> str | None:
     return _non_empty_str(v)
 
 
+def _decimal_or_zero(v: Any) -> Any:
+    """
+    None → 0. API отдаёт null там, где значения просто нет (бонус не списывался,
+    оплат не было) — для таких полей нуль равнозначен, а default сработал бы
+    только на отсутствующем ключе, не на явном null.
+    """
+    return Decimal("0") if v is None else v
+
+
 StrStripNone = Annotated[str | None, BeforeValidator(_optional_str_non_empty)]
 StrNonEmpty = Annotated[str, BeforeValidator(_non_empty_str)]
 PositiveDecimal = Annotated[Decimal, BeforeValidator(_positive_decimal)]
+DecimalOrZero = Annotated[Decimal, BeforeValidator(_decimal_or_zero)]

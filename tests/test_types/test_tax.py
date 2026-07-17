@@ -186,11 +186,13 @@ class TestTaxCharge:
         assert charge.region_name == "Московская обл."
         assert charge.receipt_count == 42
 
-    def test_unpaid_amount(self):
-        assert self._charge().unpaid_amount == Decimal("5556")
+    def test_unpaid_amount_excludes_bonus(self):
+        # 8334 начислено − 2778 погашено бонусом − 2778 оплачено
+        assert self._charge().unpaid_amount == Decimal("2778")
 
-    def test_fully_paid(self):
-        charge = self._charge(paidAmount=8334)
+    def test_fully_paid_with_bonus(self):
+        # Бонус гасит 2778, доплатить нужно 5556 — период закрыт
+        charge = self._charge(paidAmount=5556)
 
         assert charge.unpaid_amount == Decimal("0")
         assert charge.is_paid()
@@ -200,6 +202,58 @@ class TestTaxCharge:
 
     def test_unknown_charge_type_is_preserved(self):
         assert self._charge(type="SOME_NEW_TYPE").type == "SOME_NEW_TYPE"
+
+    def test_null_amounts_are_treated_as_zero(self):
+        # ФНС присылает ключ с явным null — default сработал бы только на отсутствующем ключе
+        charge = self._charge(bonusAmount=None, paidAmount=None)
+
+        assert charge.bonus_amount == Decimal("0")
+        assert charge.paid_amount == Decimal("0")
+
+    def test_null_tax_base_is_none_not_zero(self):
+        assert self._charge(taxBaseAmount=None).tax_base_amount is None
+
+    def test_base_from_api_when_present(self):
+        assert self._charge().get_base(ClientType.FROM_LEGAL_ENTITY) == Decimal("138900")
+
+    def test_base_derived_from_tax_when_api_omits_it(self):
+        # 8334 начислено по 6% → база 138 900
+        charge = self._charge(taxBaseAmount=None)
+
+        assert charge.get_base(ClientType.FROM_LEGAL_ENTITY) == Decimal("138900.00")
+
+    def test_base_derived_for_individual_rate(self):
+        # 4000 начислено по 4% → база 100 000
+        charge = self._charge(taxAmount=4000, taxBaseAmount=None)
+
+        assert charge.get_base(ClientType.FROM_INDIVIDUAL) == Decimal("100000.00")
+
+
+class TestTaxChargeBonusRatio:
+    def _charge(self, tax, bonus) -> TaxCharge:
+        return TaxCharge.model_validate({
+            "taxPeriodId": 202607, "taxAmount": tax, "bonusAmount": bonus,
+        })
+
+    def test_full_bonus(self):
+        # 6%: полный бонус за период = налог × (2/6); 8334 × 1/3 = 2778
+        assert self._charge(8334, 2778).get_bonus_ratio(ClientType.FROM_LEGAL_ENTITY) == Decimal("1")
+
+    def test_full_bonus_individual(self):
+        # 4%: полный бонус = налог × (1/4)
+        assert self._charge(4000, 1000).get_bonus_ratio(ClientType.FROM_INDIVIDUAL) == Decimal("1")
+
+    def test_half_bonus(self):
+        assert self._charge(4000, 500).get_bonus_ratio(ClientType.FROM_INDIVIDUAL) == Decimal("0.5")
+
+    def test_no_bonus(self):
+        assert self._charge(4000, 0).get_bonus_ratio(ClientType.FROM_INDIVIDUAL) == Decimal("0")
+
+    def test_ratio_clamped_to_one(self):
+        assert self._charge(4000, 99999).get_bonus_ratio(ClientType.FROM_INDIVIDUAL) == Decimal("1")
+
+    def test_zero_tax_has_no_ratio(self):
+        assert self._charge(0, 0).get_bonus_ratio(ClientType.FROM_INDIVIDUAL) == Decimal("0")
 
 
 class TestTaxHistory:
@@ -214,6 +268,17 @@ class TestTaxHistory:
         assert history.get_total_tax() == Decimal("3000")
         assert history.get_total_bonus() == Decimal("900")
         assert history.get_total_base() == Decimal("75000")
+
+    def test_total_base_derived_when_api_omits_it(self):
+        # Реальный ответ ФНС: taxBaseAmount = null во всех записях
+        history = TaxHistory.model_validate({
+            "records": [
+                {"taxPeriodId": 202606, "taxAmount": 1000, "bonusAmount": 250, "taxBaseAmount": None},
+                {"taxPeriodId": 202607, "taxAmount": 2000, "bonusAmount": 500, "taxBaseAmount": None},
+            ]
+        })
+
+        assert history.get_total_base(ClientType.FROM_INDIVIDUAL) == Decimal("75000.00")
 
     def test_empty_history(self):
         history = TaxHistory.model_validate({"records": []})

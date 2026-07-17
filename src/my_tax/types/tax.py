@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 from ..enums.general import ClientType
 from ..constants import TAX_RATES, BONUS_RATES, BONUS_LIMIT
 
-from ._base import AtomDateTime
+from ._base import AtomDateTime, DecimalOrZero
 
 
 def _kopecks(value: Decimal) -> Decimal:
@@ -293,21 +293,25 @@ class TaxCharge(BaseModel):
         alias="taxAmount"
     )
 
-    bonus_amount: Decimal = Field(
+    bonus_amount: DecimalOrZero = Field(
         default=Decimal("0"),
         description="Списано бонуса за период, ₽",
         alias="bonusAmount"
     )
 
-    paid_amount: Decimal = Field(
+    paid_amount: DecimalOrZero = Field(
         default=Decimal("0"),
         description="Оплачено, ₽",
         alias="paidAmount"
     )
 
-    tax_base_amount: Decimal = Field(
-        default=Decimal("0"),
-        description="Налоговая база (задекларированный доход за период), ₽",
+    tax_base_amount: Optional[Decimal] = Field(
+        default=None,
+        description=(
+            "Налоговая база (задекларированный доход за период), ₽. "
+            "API часто отдаёт null — базу можно вывести из tax_amount и ставки, "
+            "поэтому None здесь значит «не отдано», а не «ноль»"
+        ),
         alias="taxBaseAmount"
     )
 
@@ -365,12 +369,49 @@ class TaxCharge(BaseModel):
     @computed_field
     @property
     def unpaid_amount(self) -> Decimal:
-        """Остаток к уплате за период, ₽."""
-        return max(Decimal("0"), self.tax_amount - self.paid_amount)
+        """
+        Остаток к уплате за период, ₽.
+
+        tax_amount — налог по полной ставке, бонус его гасит: к уплате остаётся
+        tax_amount − bonus_amount (именно эту сумму ЛК показывает как «К оплате»).
+        """
+        return max(Decimal("0"), self.tax_amount - self.bonus_amount - self.paid_amount)
 
     def is_paid(self) -> bool:
         """Проверка, погашено ли начисление"""
         return self.unpaid_amount <= 0
+
+    def get_base(self, client_type: ClientType = ClientType.FROM_INDIVIDUAL) -> Decimal:
+        """
+        Налоговая база за период, ₽.
+
+        API часто не отдаёт taxBaseAmount — тогда база выводится из начисленного
+        налога и ставки (tax_amount = база × ставка).
+        """
+        if self.tax_base_amount is not None:
+            return self.tax_base_amount
+
+        rate = rate_for(client_type).rate
+        if rate <= 0:
+            return Decimal("0")
+        return _kopecks(self.tax_amount / rate)
+
+    def get_bonus_ratio(self, client_type: ClientType = ClientType.FROM_INDIVIDUAL) -> Decimal:
+        """
+        Доля, с которой бонус применялся в периоде: 1 — полностью, 0 — не применялся.
+
+        Полный бонус за период — это tax_amount × (ставка_бонуса / ставка), так что
+        доля считается без налоговой базы, которую API может не отдать.
+        """
+        tax_rate = rate_for(client_type)
+        if self.tax_amount <= 0 or tax_rate.rate <= 0:
+            return Decimal("0")
+
+        full_bonus = self.tax_amount * (tax_rate.bonus_rate / tax_rate.rate)
+        if full_bonus <= 0:
+            return Decimal("0")
+
+        return min(Decimal("1"), max(Decimal("0"), self.bonus_amount / full_bonus))
 
 
 class TaxHistory(BaseModel):
@@ -391,9 +432,14 @@ class TaxHistory(BaseModel):
         """Суммарно списано бонуса, ₽"""
         return sum((record.bonus_amount for record in self.records), Decimal("0"))
 
-    def get_total_base(self) -> Decimal:
-        """Суммарная налоговая база (задекларировано), ₽"""
-        return sum((record.tax_base_amount for record in self.records), Decimal("0"))
+    def get_total_base(self, client_type: ClientType = ClientType.FROM_INDIVIDUAL) -> Decimal:
+        """
+        Суммарная налоговая база (задекларировано), ₽.
+
+        Там, где API не отдал taxBaseAmount, база выводится из налога и ставки —
+        см. TaxCharge.get_base().
+        """
+        return sum((record.get_base(client_type) for record in self.records), Decimal("0"))
 
 
 # ---------------------------------------------------------------------------
